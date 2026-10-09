@@ -15,7 +15,9 @@ Claude Code 的 function-hooks mod，用來取代原生的 `statusLine`（cc-sta
 
 ## 安裝
 
-用 marketplace 安裝，在 Claude Code 的 prompt 輸入：
+**同一台機器只能選一種方式。** 兩種都用的話，mod 會跑兩份：出現兩個 pane 分頁、提示行重複，修改行數也會被算兩次，寫進共用的統計檔。作者的機器已經透過同步的 settings 用第二種方式（`CLAUDE_CODE_PLUGIN_DIRS`）載入，所以不要再用 marketplace 安裝。要改用 marketplace，先從 `settings.json` 拿掉 `CLAUDE_CODE_PLUGIN_DIRS`。
+
+用 marketplace 安裝（適合沒有同步這份 settings 的機器）。這是 private repo，該機器要有可以讀取它的 `gh`／git 認證。在 Claude Code 的 prompt 輸入：
 
 ```
 /plugin install status-pane --marketplace aa1287221/status-pane
