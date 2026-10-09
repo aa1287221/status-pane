@@ -1,0 +1,4 @@
+# Engine-laid typings and the tsconfig that extends them, rewritten at every load
+.claude-plugin/types/
+tsconfig.json
+node_modules/

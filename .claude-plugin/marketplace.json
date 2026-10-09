@@ -1,0 +1,14 @@
+{
+  "name": "status-pane",
+  "description": "Status dashboard pane for Claude Code (function-hooks mod).",
+  "owner": {
+    "name": "aa1287221"
+  },
+  "plugins": [
+    {
+      "name": "status-pane",
+      "source": "./",
+      "description": "Right-docked status dashboard (a port of statusline.js) plus a one-line tail under the prompt."
+    }
+  ]
+}

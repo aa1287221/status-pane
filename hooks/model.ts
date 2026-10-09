@@ -1,0 +1,588 @@
+// Pure functions behind status-pane: no $ calls, so every path runs offline.
+
+import type { AgentGroup, CpuSample, HookVerdicts, McpInfo, MemInfo, RowKey, Snap, Toggles } from './state'
+
+/** The first line of a failure, less the `<plugin>: $.fs.read: ` the engine puts in front of a refused call. */
+export const why = (err: unknown): string => {
+  const raw = err instanceof Error ? err.message : String(err)
+  const line = (raw.split('\n')[0] ?? '').replace(/^[\w-]+: \$\.[\w.]+: /, '').replace(/^\w*Error:\s*/, '')
+  return line.slice(0, 60) || 'failed'
+}
+
+/** What a draw that failed says in place of the pane. */
+export const cannotDraw = (err: unknown): string => `cannot draw: ${why(err)}`.slice(0, 60)
+
+/** Same cut as the tracker hooks and statusline.js L141, so side files share a name. */
+export const sidOf = (sessionId: string): string =>
+  (sessionId || 'default').replace(/[^a-zA-Z0-9]/g, '').slice(0, 24)
+
+export type Counter = { total: number; base: number }
+
+/** statusline.js L165-170: growth adds to the total, a drop only re-baselines. */
+export const step = (c: Counter, cur: number): Counter =>
+  cur >= c.base ? { total: c.total + (cur - c.base), base: cur } : { total: c.total, base: cur }
+
+export type Cum = { cost: Counter; dur: Counter; add: Counter; rm: Counter; tok: Counter }
+
+export const emptyCum = (): Cum => ({
+  cost: { total: 0, base: 0 },
+  dur: { total: 0, base: 0 },
+  add: { total: 0, base: 0 },
+  rm: { total: 0, base: 0 },
+  tok: { total: 0, base: 0 },
+})
+
+const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+
+/**
+ * Reads a cum file; the old flat `{cost: n}` form migrates to total = base = n (L159-163). A text that is
+ * not a JSON object is null, so a caller never mistakes a damaged file for a fresh one.
+ */
+export const parseCumStrict = (text: string): Cum | null => {
+  let stored: unknown
+  try {
+    stored = JSON.parse(text)
+  } catch {
+    return null
+  }
+  const from = asRecord(stored)
+  if (!from) return null
+  const cum = emptyCum()
+  for (const key of Object.keys(cum) as (keyof Cum)[]) {
+    const v = from[key]
+    if (typeof v === 'number') cum[key] = { total: num(v), base: num(v) }
+    else if (typeof v === 'object' && v !== null) {
+      const c = v as Record<string, unknown>
+      cum[key] = { total: num(c.total), base: num(c.base) }
+    }
+  }
+  return cum
+}
+
+/** The tolerant reading: a missing or damaged file is a fresh one (what other sessions' totals use). */
+export const parseCum = (text: string | null): Cum => (text === null ? null : parseCumStrict(text)) ?? emptyCum()
+
+/** Key order and spacing of statusline.js L171, so a rollback reads the same bytes. */
+export const cumJson = (cum: Cum): string =>
+  JSON.stringify({ cost: cum.cost, dur: cum.dur, add: cum.add, rm: cum.rm, tok: cum.tok })
+
+export type RlWindow = { used_percentage: number; resets_at: number }
+export type RlSnap = { t: number; five_hour: RlWindow | null; seven_day: RlWindow | null }
+export type RlSnaps = Record<string, RlSnap>
+export type RlField = 'five_hour' | 'seven_day'
+
+const RL_STALE_SEC = 300
+const RL_MAX_FUTURE_SEC = 8 * 86_400
+
+const isFresh = (snap: RlSnap | undefined, nowSec: number): boolean =>
+  !!snap && !!snap.t && nowSec - snap.t <= RL_STALE_SEC
+
+/** The snapshot file after this session wrote its entry: stale and tless entries are dropped (L211-219). */
+export const mergeSnap = (snaps: RlSnaps, sid: string, mine: RlSnap, nowSec: number): RlSnaps => {
+  const out: RlSnaps = {}
+  for (const [k, v] of Object.entries(snaps)) if (k !== sid && isFresh(v, nowSec)) out[k] = v
+  out[sid] = mine
+  return out
+}
+
+/**
+ * Highest used % across sessions within the newest live window (L235-257); nowSec is a parameter
+ * so a test can pin it.
+ */
+export const aggMaxOrNull = (snaps: RlSnaps, field: RlField, own: RlWindow | null, nowSec: number): number | null => {
+  const live: RlWindow[] = []
+  for (const snap of Object.values(snaps)) {
+    const w = snap?.[field]
+    if (
+      isFresh(snap, nowSec) &&
+      w &&
+      typeof w.used_percentage === 'number' &&
+      w.resets_at > nowSec &&
+      w.resets_at - nowSec <= RL_MAX_FUTURE_SEC
+    ) {
+      live.push(w)
+    }
+  }
+  if (live.length === 0) {
+    return own && own.resets_at > nowSec && typeof own.used_percentage === 'number' ? own.used_percentage : null
+  }
+  const latest = Math.max(...live.map(w => w.resets_at))
+  return Math.max(0, ...live.filter(w => w.resets_at === latest).map(w => w.used_percentage))
+}
+
+/** The same with 0 for a window nobody has a live reading of, as `statusline.js` draws it. */
+export const aggMax = (snaps: RlSnaps, field: RlField, own: RlWindow | null, nowSec: number): number =>
+  aggMaxOrNull(snaps, field, own, nowSec) ?? 0
+
+/** Seconds to the next reset; a reset already in the past wraps by the period (L282-287). */
+export const countdownSec = (
+  resetAt: number | null | undefined,
+  periodSec: number,
+  nowSec: number,
+): number | null => {
+  if (!resetAt) return null
+  if (resetAt > nowSec) return resetAt - nowSec
+  return periodSec - ((nowSec - resetAt) % periodSec)
+}
+
+export const fmtReset5h = (sec: number): string => `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`
+
+export const fmtReset7d = (sec: number): string => `${Math.floor(sec / 86_400)}d ${Math.floor((sec % 86_400) / 3600)}h`
+
+const countLines = (text: string): number =>
+  text === '' ? 0 : text.split('\n').length - (text.endsWith('\n') ? 1 : 0)
+
+const asRecord = (v: unknown): Record<string, unknown> | null =>
+  typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null
+
+/** Lines a settled tool.call added and removed, read off its `structuredPatch`; failed or held-back calls count 0. */
+export const patchLineCount = (ran: unknown): { add: number; rm: number } => {
+  const none = { add: 0, rm: 0 }
+  const call = asRecord(ran)
+  const result = asRecord(call?.result)
+  if (!call || !result || call.deny !== undefined || call.isError === true || result.staged === true) return none
+  const hunks = result.structuredPatch
+  if (!Array.isArray(hunks)) return none
+  let add = 0
+  let rm = 0
+  for (const hunk of hunks) {
+    const lines = asRecord(hunk)?.lines
+    if (!Array.isArray(lines)) continue
+    for (const line of lines) {
+      if (typeof line !== 'string') continue
+      if (line.startsWith('+')) add += 1
+      else if (line.startsWith('-')) rm += 1
+    }
+  }
+  if (add === 0 && rm === 0 && result.type === 'create' && typeof result.content === 'string') {
+    add = countLines(result.content)
+  }
+  return { add, rm }
+}
+
+/** The aggregate `cpu` line, reduced to the counters os.cpus() gives statusline.js (L546-547): user+nice+sys+idle+irq. */
+export const parseCpuStat = (text: string): CpuSample | null => {
+  const m = /^cpu\s+(\d.*)$/m.exec(text)
+  if (!m?.[1]) return null
+  const f = m[1].trim().split(/\s+/).map(Number)
+  if (f.length < 4 || f.some(n => !Number.isFinite(n))) return null
+  const [user = 0, nice = 0, system = 0, idle = 0, , irq = 0] = f
+  return { idle, total: user + nice + system + idle + irq }
+}
+
+/** Busy share between two samples; the first sample has no baseline (null), a stalled or reset counter reads 0 (L551-553). */
+export const cpuPercent = (prev: CpuSample | null, cur: CpuSample): number | null => {
+  if (!prev) return null
+  const total = cur.total - prev.total
+  if (total <= 0) return 0
+  return Math.max(0, Math.min(100, Math.round((1 - (cur.idle - prev.idle) / total) * 100)))
+}
+
+const kbOf = (text: string, name: string): number | null => {
+  const m = new RegExp(`^${name}:\\s+(\\d+)\\s*kB`, 'm').exec(text)
+  return m?.[1] ? Number(m[1]) : null
+}
+
+/** RAM in use as `MemTotal - MemAvailable`: Node's os.freemem() is MemAvailable on Linux (equal here), so this is L554-556's figure. */
+export const parseMeminfo = (text: string): MemInfo | null => {
+  const total = kbOf(text, 'MemTotal')
+  const available = kbOf(text, 'MemAvailable')
+  if (!total || available === null) return null
+  const used = Math.max(0, total - available)
+  return { usedKb: used, totalKb: total, pct: Math.round((used / total) * 100) }
+}
+
+export const fmtGb = (kb: number): string => (kb / 1024 ** 2).toFixed(1)
+
+export const ROW_KEYS: readonly RowKey[] = [
+  'summary',
+  'dir',
+  'repo',
+  'model',
+  'cost',
+  'usage',
+  'quota',
+  'agents',
+  'memory_mcp',
+  'sys',
+  'edited',
+  'history',
+]
+
+/** The rows file (L19-31): a missing key or file leaves the row on; `enabled:false` is the master switch. */
+export const parseToggles = (text: string | null): Toggles =>
+  (text === null ? null : parseTogglesStrict(text)) ?? { enabled: true, rows: allOn() }
+
+const allOn = () => Object.fromEntries(ROW_KEYS.map(k => [k, true])) as Record<RowKey, boolean>
+
+/** Like parseToggles, but a text that is not a JSON object is null, so a bad read can keep the previous toggles. */
+export function parseTogglesStrict(text: string): Toggles | null {
+  let stored: unknown
+  try {
+    stored = JSON.parse(text)
+  } catch {
+    return null
+  }
+  const from = asRecord(stored)
+  if (!from) return null
+  const rows = allOn()
+  for (const k of ROW_KEYS) if (k in from) rows[k] = !!from[k]
+  return { enabled: from.enabled !== false, rows }
+}
+
+/** Session length as statusline.js prints it (L129-134). */
+export const fmtDur = (min: number): string => {
+  if (min < 60) return `${min}min`
+  if (min < 1440) {
+    const hr = Math.floor(min / 60)
+    const m = min % 60
+    return m > 0 ? `${hr}hr ${m}min` : `${hr}hr`
+  }
+  const d = Math.floor(min / 1440)
+  const hr = Math.floor((min % 1440) / 60)
+  return hr > 0 ? `${d}d ${hr}hr` : `${d}d`
+}
+
+export const fmtTok = (n: number): string =>
+  n >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}K` : String(n)
+
+export const agoText = (nowMs: number, thenMs: number): string => {
+  const m = Math.round((nowMs - thenMs) / 60_000)
+  return m < 1 ? 'now' : m < 60 ? `${m}m ago` : `${Math.floor(m / 60)}h ago`
+}
+
+/** `cc()` of statusline.js L128: red from 80, yellow from 50. */
+export type Tone = 'green' | 'yellow' | 'red'
+export const pctColor = (pct: number): Tone => (pct >= 80 ? 'red' : pct >= 50 ? 'yellow' : 'green')
+
+/** Effort level colours of L354-362; xhigh is the 256-colour orange. */
+export const effortColor = (level: string): { color?: string; dim?: boolean } => {
+  if (level === 'low') return { dim: true }
+  if (level === 'high') return { color: 'yellow' }
+  if (level === 'xhigh') return { color: '#ff8700' }
+  if (level === 'max') return { color: 'red' }
+  return { color: 'green' }
+}
+
+// ---- collector helpers ----
+
+/** `~` for a cwd under home (on a path boundary), else the last two components (L315-319). */
+export const shortDir = (cwd: string, home: string | undefined): string => {
+  const base = (home ?? '').replace(/\/+$/, '')
+  if (cwd && base && (cwd === base || cwd.startsWith(`${base}/`))) return `~${cwd.slice(base.length)}`
+  return cwd.split('/').slice(-2).join('/')
+}
+
+/** `git status --porcelain` line codes as statusline.js L303-309 bins them. */
+export const countGitStatus = (porcelain: string): { added: number; modified: number; untracked: number } => {
+  const n = { added: 0, modified: 0, untracked: 0 }
+  for (const line of porcelain.split('\n')) {
+    if (!line) continue
+    const code = line.slice(0, 2)
+    if (code === '??') n.untracked += 1
+    else if (code.includes('A')) n.added += 1
+    else n.modified += 1
+  }
+  return n
+}
+
+/** `owner/repo` of the origin URL, else the top-level directory's name (L310-313). */
+export const repoName = (remoteUrl: string, topLevel: string): string => {
+  const m = /[/:]([\w.-]+)\/([\w.-]+?)(?:\.git)?$/.exec(remoteUrl)
+  if (m) return `${m[1]}/${m[2]}`
+  return topLevel.split('/').filter(Boolean).pop() ?? ''
+}
+
+/**
+ * Summary file, else the first user message, else `session <id>` (L563-577; the mod has no session_name).
+ * The first user entry decides even when it is empty, as in the original.
+ */
+export const resolveSummary = (summaryText: string | null, msgs: unknown, sid: string): string => {
+  const fromFile = (summaryText ?? '').trim().split('\n')[0]?.slice(0, 500) ?? ''
+  if (fromFile) return fromFile
+  const first = Array.isArray(msgs) ? msgs.find(m => asRecord(m)?.r === 'u') : undefined
+  const t = asRecord(first)?.t
+  const text = typeof t === 'string' ? t.replace(/\n/g, ' ').trim().slice(0, 60) : ''
+  return text || `session ${sid.slice(0, 8)}`
+}
+
+/** Server counts from `mcp-status-cache.json`; null when no server is listed (L435-451). */
+export const mcpInfo = (cache: unknown): McpInfo | null => {
+  const servers = asRecord(asRecord(cache)?.servers)
+  if (!servers) return null
+  const info: McpInfo = { total: 0, healthy: 0, bad: [] }
+  for (const [name, entry] of Object.entries(servers)) {
+    info.total += 1
+    const status = asRecord(entry)?.status
+    if (status === 'connected') info.healthy += 1
+    else {
+      info.bad.push({ name: name.replace(/^plugin:[^:]+:/, '').replace(/^claude\.ai /, ''), isAuth: status === 'auth' })
+    }
+  }
+  return info.total > 0 ? info : null
+}
+
+/** `effort.level` of a main-loop hook input; a subagent's own effort is not the session's. */
+export const effortFrom = (input: unknown): string | null => {
+  const rec = asRecord(input)
+  if (!rec || rec.agent_id || rec.agentId) return null
+  const level = asRecord(rec.effort)?.level
+  return typeof level === 'string' && level ? level.toLowerCase() : null
+}
+
+/**
+ * The newest level a main-loop hook input carried, else CLAUDE_EFFORT, else unknown (null). The old
+ * effort-current.txt and settings fallbacks are gone: the file is global and read `max` in a `medium` session.
+ */
+export const resolveEffort = (src: { hook: string | null; env: string | undefined }): string | null => {
+  const first = [src.hook ?? '', src.env ?? ''].map(c => c.trim()).find(c => c !== '')
+  return first ? first.toLowerCase() : null
+}
+
+/** A level as the settings spell it: a non-empty string, lower-cased. */
+const levelOf = (v: unknown): string | null => (typeof v === 'string' && v.trim() !== '' ? v.trim().toLowerCase() : null)
+
+/** The effort the settings name: the top-level `effortLevel`, else the longest-prefix `modelSettings` entry; `sources` come highest precedence first. */
+export const configuredEffort = (sources: readonly unknown[], modelId: string): string | null => {
+  const recs = sources.map(asRecord).filter((r): r is Record<string, unknown> => r !== null)
+  for (const rec of recs) {
+    const top = levelOf(rec.effortLevel)
+    if (top !== null) return top
+  }
+  const id = modelId.toLowerCase()
+  let best: { len: number; level: string } | null = null
+  for (const rec of recs) {
+    for (const [key, entry] of Object.entries(asRecord(rec.modelSettings) ?? {})) {
+      const level = levelOf(asRecord(entry)?.effortLevel)
+      if (level === null || key === '' || !id.startsWith(key.toLowerCase())) continue
+      if (best === null || key.length > best.len) best = { len: key.length, level }
+    }
+  }
+  return best?.level ?? null
+}
+
+/** A `SessionRateLimit` as the snapshot file spells a window; the ISO reset time becomes epoch seconds. */
+export const rlWindow = (rl: { percentUsed: number; resetsAt?: string } | undefined): RlWindow | null => {
+  if (!rl || typeof rl.percentUsed !== 'number' || !rl.resetsAt) return null
+  const ms = Date.parse(rl.resetsAt)
+  return Number.isFinite(ms) ? { used_percentage: rl.percentUsed, resets_at: Math.floor(ms / 1000) } : null
+}
+
+/** Cost and tokens summed over every session's cum file (L487-499). */
+export const allTotals = (cumTexts: (string | null)[]): { cost: number; tok: number } => {
+  let cost = 0
+  let tok = 0
+  for (const text of cumTexts) {
+    const cum = parseCum(text)
+    cost += cum.cost.total
+    tok += cum.tok.total
+  }
+  return { cost, tok }
+}
+
+/** The tracker hooks the data files come from: the script in `settings.hooks`, and the events it must be wired to. */
+export const HOOK_SCRIPTS: Record<keyof HookVerdicts, { script: string; events: readonly string[] }> = {
+  agents: { script: 'subagent-tracker.js', events: ['SubagentStart', 'SubagentStop'] },
+  edited: { script: 'file-tracker.js', events: ['PostToolUse'] },
+  summary: { script: 'summary-updater.js', events: ['UserPromptSubmit'] },
+  messages: { script: 'message-tracker.js', events: ['UserPromptSubmit', 'Stop'] },
+  compact: { script: 'compact-monitor.js', events: ['PreCompact'] },
+}
+
+/** What a refresh assumes before any settings read has worked: nothing is reported missing on a guess. */
+export const ALL_CONFIGURED: HookVerdicts = { agents: true, edited: true, summary: true, messages: true, compact: true }
+
+/**
+ * Whether each tracker hook is wired in any of the settings given: some `hooks.<Event>[].hooks[].command`
+ * names its script. Several are given because the merge takes `hooks` whole from the last source that has it.
+ */
+export const hooksConfigured = (...settings: unknown[]): HookVerdicts => {
+  const wired = ({ script, events }: { script: string; events: readonly string[] }): boolean =>
+    settings.some(one => {
+      const hooks = asRecord(asRecord(one)?.hooks)
+      return events.some(event => {
+        const groups = hooks?.[event]
+        if (!Array.isArray(groups)) return false
+        return groups.some(group => {
+          const entries = asRecord(group)?.hooks
+          if (!Array.isArray(entries)) return false
+          return entries.some(entry => {
+            const command = asRecord(entry)?.command
+            return typeof command === 'string' && command.includes(script)
+          })
+        })
+      })
+    })
+  return {
+    agents: wired(HOOK_SCRIPTS.agents),
+    edited: wired(HOOK_SCRIPTS.edited),
+    summary: wired(HOOK_SCRIPTS.summary),
+    messages: wired(HOOK_SCRIPTS.messages),
+    compact: wired(HOOK_SCRIPTS.compact),
+  }
+}
+
+// claude-<family>-<n>-<n>[-<yyyymmdd>][[1m]], or the older claude-<n>-<n>-<family>[-<yyyymmdd>]
+const MODEL_ID = /^claude-(?:(\d{1,2}(?:-\d{1,2})*)-)?([a-z]+)(?:-(\d{1,2}(?:-\d{1,2})*))?(?:-\d{8})?(\[[^\]]*\])?$/
+
+/** The session's model id (`claude-opus-5-5[1m]`) as the native status line names it (`Opus 5.5 [1m]`). */
+export const modelLabel = (raw: string): string => {
+  const m = MODEL_ID.exec(raw)
+  const lead = m?.[1]
+  const trail = m?.[3]
+  // exactly one version, before or after the family; anything else is not an id we know
+  if (!m || (lead === undefined) === (trail === undefined)) return raw.replace(/^Claude\s+/i, '')
+  const family = m[2] ?? ''
+  const version = (lead ?? trail ?? '').replaceAll('-', '.')
+  return `${family.charAt(0).toUpperCase()}${family.slice(1)} ${version}${m[4] ? ` ${m[4]}` : ''}`
+}
+
+// ---- display width ----
+
+/** East Asian wide cells, as statusline.js L69-105 counts them. */
+const isWide = (cp: number): boolean =>
+  (cp >= 0x1100 && cp <= 0x115f) ||
+  (cp >= 0x231a && cp <= 0x231b) ||
+  (cp >= 0x23e9 && cp <= 0x23f3) ||
+  (cp >= 0x23f8 && cp <= 0x23fa) ||
+  (cp >= 0x25fd && cp <= 0x25fe) ||
+  (cp >= 0x2614 && cp <= 0x2615) ||
+  (cp >= 0x2648 && cp <= 0x2653) ||
+  cp === 0x267f ||
+  cp === 0x26a1 ||
+  (cp >= 0x26aa && cp <= 0x26ab) ||
+  (cp >= 0x26bd && cp <= 0x26be) ||
+  (cp >= 0x26c4 && cp <= 0x26c5) ||
+  cp === 0x26ce ||
+  cp === 0x26d4 ||
+  cp === 0x26ea ||
+  (cp >= 0x26f2 && cp <= 0x26f3) ||
+  cp === 0x26f5 ||
+  cp === 0x26fa ||
+  cp === 0x26fd ||
+  cp === 0x2705 ||
+  cp === 0x2728 ||
+  cp === 0x274c ||
+  cp === 0x274e ||
+  (cp >= 0x2753 && cp <= 0x2755) ||
+  cp === 0x2757 ||
+  (cp >= 0x2795 && cp <= 0x2797) ||
+  cp === 0x27b0 ||
+  cp === 0x27bf ||
+  (cp >= 0x2e80 && cp <= 0x303e) ||
+  (cp >= 0x3041 && cp <= 0x33bf) ||
+  (cp >= 0x3400 && cp <= 0x4dbf) ||
+  (cp >= 0x4e00 && cp <= 0xa4cf) ||
+  (cp >= 0xa960 && cp <= 0xa97c) ||
+  (cp >= 0xac00 && cp <= 0xd7a3) ||
+  (cp >= 0xf900 && cp <= 0xfaff) ||
+  (cp >= 0xfe10 && cp <= 0xfe6b) ||
+  (cp >= 0xff01 && cp <= 0xff60) ||
+  (cp >= 0xffe0 && cp <= 0xffe6) ||
+  (cp >= 0x1f004 && cp <= 0x1f9ff) ||
+  (cp >= 0x1fa00 && cp <= 0x1faff) ||
+  (cp >= 0x20000 && cp <= 0x2fffd) ||
+  (cp >= 0x30000 && cp <= 0x3fffd)
+
+export const dw = (s: string): number => {
+  let w = 0
+  for (const ch of s) w += isWide(ch.codePointAt(0) ?? 0) ? 2 : 1
+  return w
+}
+
+// ---- clock and liveness ----
+
+const pad2 = (n: number): string => String(n).padStart(2, '0')
+
+/** HH:MM(:SS) of `ms` in local time, or at `tzMin` minutes east of UTC when a test pins it. */
+export const fmtClock = (ms: number, tzMin: number | undefined, withSeconds: boolean): string => {
+  const d = new Date(tzMin === undefined ? ms : ms + tzMin * 60_000)
+  const [h, m, sec] =
+    tzMin === undefined ? [d.getHours(), d.getMinutes(), d.getSeconds()] : [d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds()]
+  const hm = `${pad2(h)}:${pad2(m)}`
+  return withSeconds ? `${hm}:${pad2(sec)}` : hm
+}
+
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const
+
+/**
+ * The wall-clock time a countdown of `sec` seconds taken at `atMs` runs out at, in local time (or at `tzMin` minutes east
+ * of UTC): `HH:MM` when that is the day of `atMs`, else `Ddd HH:MM`; `always` puts the weekday on whatever the day.
+ */
+export const fmtResetClock = (atMs: number, sec: number, tzMin: number | undefined, always: boolean): string => {
+  const end = atMs + sec * 1000
+  const day = (ms: number): [number, number, number, number] => {
+    const d = new Date(tzMin === undefined ? ms : ms + tzMin * 60_000)
+    return tzMin === undefined ? [d.getFullYear(), d.getMonth(), d.getDate(), d.getDay()] : [d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCDay()]
+  }
+  const [y, m, date, weekday] = day(end)
+  const [y0, m0, date0] = day(atMs)
+  const hm = fmtClock(end, tzMin, false)
+  return always || y !== y0 || m !== m0 || date !== date0 ? `${WEEKDAYS[weekday]!} ${hm}` : hm
+}
+
+export const STALE_MS = 90_000
+export const DEAD_MS = 300_000
+
+export const staleness = (atMs: number, nowMs: number): 'fresh' | 'stale' | 'dead' => {
+  const age = nowMs - atMs
+  return age > DEAD_MS ? 'dead' : age > STALE_MS ? 'stale' : 'fresh'
+}
+
+// ---- agents ----
+
+/** Tracker file entries grouped by name: running first, then the latest finish, top three (L366-384). */
+export const groupAgents = (raw: unknown): AgentGroup[] => {
+  const byName = new Map<string, AgentGroup>()
+  for (const [key, info] of Object.entries(asRecord(raw) ?? {})) {
+    const rec = asRecord(info)
+    if (!rec) continue
+    const name = typeof rec.name === 'string' && rec.name ? rec.name : key
+    const g = byName.get(name) ?? { name, running: 0, done: 0, latest: 0 }
+    if (rec.status === 'running') g.running += 1
+    else {
+      g.done += 1
+      const finished = typeof rec.finished === 'number' ? rec.finished : 0
+      if (finished > g.latest) g.latest = finished
+    }
+    byName.set(name, g)
+  }
+  return [...byName.values()].sort((a, b) => b.running - a.running || b.latest - a.latest).slice(0, 3)
+}
+
+// ---- prompt tail ----
+
+const TAIL_MAX = 48
+const TAIL_SEP = ' · '
+
+/** The context percentage, or null when it is unknown: the engine gave none, or the session has no tokens yet. */
+export const knownContextPct = (v: { pct: number | null; used: number }): number | null => (v.pct !== null && v.used > 0 ? v.pct : null)
+
+const buildTail = (snap: Snap | null, nowMs: number, tzMin?: number): string | null => {
+  if (!snap || !snap.toggles.enabled) return null
+  const on = snap.toggles.rows
+  const parts: string[] = []
+  const ctxPct = on.usage && snap.context.ok ? knownContextPct(snap.context.v) : null
+  if (ctxPct !== null) parts.push(`ctx ${Math.round(ctxPct)}%`)
+  if (on.quota && snap.quota.ok) {
+    // a window nobody has a reading of is left out, not told as 0%
+    if (snap.quota.v.five.pct !== null) parts.push(`5h ${snap.quota.v.five.pct}%`)
+    if (snap.quota.v.seven.pct !== null) parts.push(`7d ${snap.quota.v.seven.pct}%`)
+  }
+  if (on.cost && snap.cost.ok) parts.push(`$${snap.cost.v.session.toFixed(2)}`)
+  parts.push(staleness(snap.at, nowMs) === 'fresh' ? fmtClock(snap.at, tzMin, false) : 'stale')
+  while (parts.length > 1 && parts.join(TAIL_SEP).length > TAIL_MAX) parts.pop()
+  return parts.join(TAIL_SEP)
+}
+
+/** `ctx 3% · 5h 23% · 7d 61% · $3.20 · 02:41`; null when there is nothing of ours to draw. */
+export const tailText = (snap: Snap | null, nowMs: number, tzMin?: number): string | null => {
+  try {
+    return buildTail(snap, nowMs, tzMin)
+  } catch {
+    return null
+  }
+}
+
+export const mergeTail = (upstream: string | undefined, ours: string): string =>
+  upstream ? `${upstream}${TAIL_SEP}${ours}` : ours

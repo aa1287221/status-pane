@@ -1,0 +1,45 @@
+# status-pane
+
+Claude Code 的 function-hooks mod，用來取代原生的 `statusLine`（cc-statusline 的 `statusline.js`）：
+
+- **右側 pane**：卡片式儀表板。卡片用引擎畫的 `Box`，進度條用 truecolor 的 `Raster`。卡片包括 CONTEXT、5H、7D、COST、GIT、ACTIVITY、SYSTEM，依寬度自動排成 1、2 或 3 欄，超出高度時用滑鼠捲動。
+- **prompt 下方提示行的尾巴**：一行精簡資訊，例如 `ctx 4% · 5h 20% · 7d 74% · $0.33 · 21:09`，被 `/diff` 或其他 pane 擋住時仍看得到。
+
+詳細規格、資料對應與測試路徑矩陣在 [`hooks/SPEC.md`](hooks/SPEC.md)。
+
+## 需求
+
+- Claude Code 2.1.294 以上，環境變數 `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`（可放在 `~/.claude/settings.json` 的 `env`）。
+- 全螢幕介面（settings 的 `"tui": "fullscreen"`），pane 才會貼在右側；主畫面模式下它會出現在 prompt 上方。
+- 部分欄位讀的是 cc-statusline tracker hook 寫在 `/tmp/claude-*-<sid>.*` 的檔案：`subagent-tracker`、`file-tracker`、`message-tracker`、`summary-updater`、`compact-monitor`，加上 `~/.claude/hooks/mcp-status-refresh.js`。缺少的話，對應的列會顯示 `n/a (… hook not configured)`。
+
+## 安裝
+
+用 marketplace 安裝，在 Claude Code 的 prompt 輸入：
+
+```
+/plugin install status-pane --marketplace aa1287221/status-pane
+```
+
+或直接從資料夾載入，在 `~/.claude/settings.json` 加上：
+
+```json
+{ "env": { "CLAUDE_CODE_PLUGIN_DIRS": "~/.claude/plugins/status-pane" } }
+```
+
+這種方式下，資料夾內容有修改就會自動重新載入。
+
+## 使用
+
+- session 開始時 pane 會自動打開：終端機至少 144 欄才會打開；手動開過一次、而且之後沒有手動關掉的話，降到 110 欄。
+- 手動打開或叫回來，輸入 `/status-pane`。
+- `~/.claude/cc-statusline-rows.json` 可以逐列關閉；設成 `"enabled": false` 會整個停用，什麼都不收集、不寫入。
+
+## 開發
+
+```
+claude plugin validate .
+claude plugin test .
+```
+
+測試是 `hooks/*.test.ts`，跑在 `claude-code/testing` 測試套件上，不需要 fs、process 或網路。

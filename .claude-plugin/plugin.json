@@ -1,0 +1,9 @@
+{
+  "name": "status-pane",
+  "version": "0.1.0",
+  "description": "Right-docked status dashboard (a port of statusline.js) plus a one-line tail under the prompt.",
+  "author": {
+    "name": "aa1287221"
+  },
+  "types": "./hooks/state.d.ts"
+}
