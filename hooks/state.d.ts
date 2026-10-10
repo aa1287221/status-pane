@@ -17,9 +17,10 @@ export type RowKey =
   | 'sys'
   | 'edited'
   | 'history'
+  | 'progress'
   | 'fixture'
 
-/** `~/.claude/cc-statusline-rows.json`: master switch plus one flag per row (`fixture` is off unless the file turns it on). */
+/** `~/.claude/cc-statusline-rows.json`: master switch plus one flag per row (`fixture` is off unless the file turns it on with the boolean true). */
 export type Toggles = { enabled: boolean; rows: Record<RowKey, boolean> }
 
 export type GitCounts = { added: number; modified: number; untracked: number }
@@ -37,6 +38,12 @@ export type McpInfo = { total: number; healthy: number; bad: { name: string; isA
 
 /** Whether each tracker hook the data files come from is wired in the settings (see HOOK_SCRIPTS in model.ts). */
 export type HookVerdicts = { agents: boolean; edited: boolean; summary: boolean; messages: boolean; compact: boolean }
+
+/** A tool call of the main loop that has started and not yet ended; `startedAt` is epoch ms. */
+export type ToolRun = { id: string; tool: string; startedAt: number }
+
+/** The calls in flight for one session, kept by the plugin's own `tool.call` hook (never from a tracker file). */
+export type NowState = { sid: string; calls: ToolRun[] }
 
 export type CpuSample = { idle: number; total: number }
 
@@ -83,6 +90,8 @@ declare module 'claude-code' {
       cpu: CpuSample | null
       /** The last 16 CPU readings (percent, oldest first): one per refresh, none for a reading that was n/a. */
       cpuHist: number[]
+      /** Main-loop tool calls in flight; null until a hook has written it since the plugin loaded. */
+      now: NowState | null
       /** When a refresh last failed to write its snapshot; writing it makes the pane read the clock again. */
       checkedAt: number
     }

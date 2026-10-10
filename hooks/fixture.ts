@@ -80,6 +80,7 @@ export const makeSnap = (over: Partial<Snap> = {}): Snap => ({
       sys: true,
       edited: true,
       history: true,
+      progress: true,
       fixture: false,
     },
   },
@@ -174,6 +175,8 @@ export type World = {
   reads: string[]
   opened: PaneOpenArgs[]
   registered: string[]
+  /** The whole spec of each `command.register`, in order. */
+  commandSpecs: Record<string, unknown>[]
   writes: { path: string; text: string }[]
   /** Every `mv` the plugin ran that moved something. */
   moves: { from: string; to: string }[]
@@ -184,8 +187,9 @@ export type World = {
 /** What a test compares of a pane: the cards by title (the header apart) and the lines under them. */
 export type PaneSummary = { cards: Record<string, { value: string; body: string[] }>; footer: string[] }
 
+/** PROGRESS is left out: it changes with every tool call and has its own suite, `progress.test.ts`. */
 export const summarize = (parts: PaneParts): PaneSummary => ({
-  cards: Object.fromEntries(parts.cards.filter(c => c.title !== '').map(c => [c.title, { value: c.value, body: c.body }])),
+  cards: Object.fromEntries(parts.cards.filter(c => c.title !== '' && c.title !== 'PROGRESS').map(c => [c.title, { value: c.value, body: c.body }])),
   footer: parts.footer,
 })
 
@@ -360,6 +364,7 @@ export const makeWorld = (): World => {
     reads: [],
     opened: [],
     registered: [],
+    commandSpecs: [],
     writes: [],
     moves: [],
     ran: [],
@@ -424,6 +429,7 @@ export const installWorld = (on: On, world: World): { clock: MockClock; advance:
   })
   on('command.register', (_$, e) => {
     world.registered.push(e.name)
+    world.commandSpecs.push({ ...e })
     return { value: { command: e.name } }
   })
   on('ui.open', (_$, e) => {

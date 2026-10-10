@@ -3,9 +3,10 @@ import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import { MCP_EVERY_MS, refresh } from './collect'
 import type { Io } from './collect'
-import { cannotDraw, DEAD_MS, effortFrom, mergeTail, patchLineCount, sidOf, STALE_MS, tailText } from './model'
+import { addRun, cannotDraw, DEAD_MS, dropRun, effortFrom, mergeTail, patchLineCount, progressText, runOf, sidOf, STALE_MS, tailText, why } from './model'
 import { HIST_MAX, layoutTree, paneLayout } from './pane'
 import { readBytesCapped } from './sidefile'
+import type { NowState, Res } from './state'
 
 const PANE = 'status-pane'
 const TICK_MS = 30_000
@@ -17,6 +18,8 @@ const FOLLOW_UP_MS = 3000
 const STUCK_MS = 60_000
 /** The repaint at a stale boundary waits this much past it, so the age has crossed the line when it draws. */
 const REPAINT_MARGIN_MS = 1000
+/** While a tool runs the pane repaints this often so its elapsed time moves; not measured, chosen to be cheap. */
+const NOW_TICK_MS = 2000
 
 const snapA = atom({ plugin: 'status-pane', key: 'snap' } as const, null)
 const effortA = atom({ plugin: 'status-pane', key: 'effort' } as const, null)
@@ -25,12 +28,15 @@ const outA = atom({ plugin: 'status-pane', key: 'outTokens' } as const, { sid: '
 const cpuA = atom({ plugin: 'status-pane', key: 'cpu' } as const, null)
 const histA = atom({ plugin: 'status-pane', key: 'cpuHist' } as const, [] as number[])
 const checkedA = atom({ plugin: 'status-pane', key: 'checkedAt' } as const, 0)
+const nowA = atom({ plugin: 'status-pane', key: 'now' } as const, null)
 
 /** What one load of the module keeps in memory; everything drawn lives in $.state. */
 type Run = {
   timer: Timer | null
   followUp: Timer | null
   repaint: Timer[]
+  /** The repaint that moves the elapsed time; set only while a call is in flight. */
+  nowTick: Timer | null
   running: Promise<void> | null
   /** Counts refreshes: only the one that holds the latest number may write or free `running`. */
   epoch: number
@@ -182,6 +188,76 @@ const arm = ($: EngineInterface, run: Run): void => {
   })
 }
 
+/** Starts or stops the repaint that moves NOW's elapsed time. */
+const keepTicking = ($: EngineInterface, run: Run, active: boolean): void => {
+  if (!active) {
+    run.nowTick?.cancel()
+    run.nowTick = null
+    return
+  }
+  if (run.nowTick) return
+  try {
+    run.nowTick = $.clock.every(NOW_TICK_MS, () => {
+      try {
+        $.ui.invalidate('ui.render')
+      } catch {
+        // nothing is drawn
+      }
+    })
+  } catch {
+    // the elapsed time then moves with the next repaint
+  }
+}
+
+/** Records the start of a main-loop call; returns its id, or null when nothing was recorded. Never throws. */
+const noteStart = async ($: EngineInterface, run: Run, e: { tool: string; tool_use_id?: string; agentId?: string }): Promise<string | null> => {
+  try {
+    const call = runOf(e, await $.clock.now())
+    if (!call) return null
+    const sid = sidOf(await $.session.id())
+    await update($, nowA, s => addRun(s, sid, call))
+    keepTicking($, run, true)
+    return call.id
+  } catch {
+    return null
+  }
+}
+
+const noteEnd = async ($: EngineInterface, run: Run, id: string | null): Promise<void> => {
+  if (id === null) return
+  try {
+    const sid = sidOf(await $.session.id())
+    await update($, nowA, s => dropRun(s, sid, id))
+    keepTicking($, run, ((await read($, nowA))?.calls.length ?? 0) > 0)
+  } catch {
+    // the turn ending clears what is left
+  }
+}
+
+/** The session has nothing in flight: a start, or the main loop's turn ending. */
+const noteIdle = async ($: EngineInterface, run: Run): Promise<void> => {
+  try {
+    const sid = sidOf(await $.session.id())
+    await update($, nowA, () => ({ sid, calls: [] }))
+    keepTicking($, run, false)
+  } catch {
+    // NOW then reads n/a until the next call is recorded
+  }
+}
+
+/** What the NOW card and /progress are drawn from; each source that cannot be read is its own n/a. */
+const progressSources = async ($: EngineInterface): Promise<{ tools: Res<NowState | null>; sid: Res<string> }> => {
+  const tools: Res<NowState | null> = await read($, nowA).then(
+    v => ({ ok: true as const, v }),
+    (err: unknown) => ({ ok: false as const, why: `工具紀錄讀不到：${why(err)}` }),
+  )
+  const sid: Res<string> = await $.session.id().then(
+    id => ({ ok: true as const, v: sidOf(id) }),
+    (err: unknown) => ({ ok: false as const, why: `session id 讀不到：${why(err)}` }),
+  )
+  return { tools, sid }
+}
+
 const noteEffort = async ($: EngineInterface, input: unknown): Promise<void> => {
   try {
     const level = effortFrom(input)
@@ -198,6 +274,7 @@ export const register: Register = on => {
     timer: null,
     followUp: null,
     repaint: [],
+    nowTick: null,
     running: null,
     epoch: 0,
     lastTickAt: Number.NEGATIVE_INFINITY,
@@ -206,6 +283,11 @@ export const register: Register = on => {
 
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'status-pane', description: 'Open the status pane' }).catch(() => undefined)
+    // immediate: answers at once while a turn streams; it reads state only, never the turn's
+    await $.command
+      .register({ name: 'progress', description: 'Show the current tool and how long it has run', immediate: true })
+      .catch(() => undefined)
+    void noteIdle($, run)
     void $.ui.open({ id: PANE, title: 'Status' }).catch(() => undefined)
     try {
       arm($, run)
@@ -225,6 +307,17 @@ export const register: Register = on => {
     }
   })
 
+  on('command.run', { command: 'progress' }, async $ => {
+    try {
+      const snap = await read($, snapA)
+      const nowMs = await $.clock.now()
+      const { tools, sid } = await progressSources($)
+      return { text: progressText(snap, tools, sid, nowMs) }
+    } catch (err) {
+      return { text: `progress n/a（${cannotDraw(err)}）` }
+    }
+  })
+
   on('classic.PostToolUse', async ($, e, next) => {
     await noteEffort($, e)
     return next(e)
@@ -235,7 +328,13 @@ export const register: Register = on => {
   })
 
   on('tool.call', async ($, e, next) => {
-    const ran = await next(e)
+    const called = await noteStart($, run, e)
+    let ran
+    try {
+      ran = await next(e)
+    } finally {
+      await noteEnd($, run, called)
+    }
     try {
       const n = patchLineCount(ran)
       if (n.add > 0 || n.rm > 0) {
@@ -271,6 +370,8 @@ export const register: Register = on => {
     } catch {
       // the 30 s timer carries on
     }
+    // the main loop's turn ending means nothing of it is in flight, whatever ends went unseen
+    if (e.agentId === undefined) await noteIdle($, run)
     return next(e)
   })
 
@@ -282,9 +383,10 @@ export const register: Register = on => {
       // the chart is optional: a history that cannot be read costs the chart, not the pane
       const cpuHist = await read($, histA).catch(() => [] as number[])
       const nowMs = await $.clock.now()
+      const progress = await progressSources($)
       // a Raster is drawn on the terminal only; every other surface gets the text gauge and sparkline
       const raster = e.surface === 'terminal'
-      const layout = paneLayout(snap, { columns: e.props.bodyColumns, nowMs, raster, cpuHist })
+      const layout = paneLayout(snap, { columns: e.props.bodyColumns, nowMs, raster, cpuHist, progress })
       return layoutTree(layout, {
         Box: table.Box,
         Text: table.Text,

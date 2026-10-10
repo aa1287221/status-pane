@@ -85,7 +85,7 @@ describe('session.start', () => {
 
     await $.session.start(START)
 
-    expect(world.registered).toEqual(['status-pane'])
+    expect(world.registered).toEqual(['status-pane', 'progress'])
     expect(world.opened).toEqual([{ id: 'status-pane', title: 'Status' }])
     expect(world.armed).toEqual([30_000])
   })
@@ -113,6 +113,7 @@ describe('#10 pane through the engine', () => {
     const parts = await paneView($, 36)
     expect(parts.cards.map(c => [c.title, c.width])).toEqual([
       ['', 34],
+      ['PROGRESS', 34],
       ['CONTEXT', 34],
       ['5H', 34],
       ['7D', 34],
@@ -303,7 +304,7 @@ describe('#8 row toggles through the rows file', () => {
 
     const parts = await paneView($)
     // 5H and 7D gone, CONTEXT has the whole width to itself
-    expect(parts.cards.map(c => [c.title, c.width])).toEqual([['', 87], ['CONTEXT', 87], ['COST', 29], ['GIT', 28], ['ACTIVITY', 28], ['SYSTEM', 87]])
+    expect(parts.cards.map(c => [c.title, c.width])).toEqual([['', 87], ['PROGRESS', 87], ['CONTEXT', 87], ['COST', 29], ['GIT', 28], ['ACTIVITY', 28], ['SYSTEM', 87]])
     expect(summarize(parts).cards).toMatchObject(without(WORLD_89.cards, '5H', '7D', 'CONTEXT'))
     expect(cardOf(parts, 'CONTEXT').value).toBe('3%')
     expect(parts.footer).toEqual(WORLD_89.footer)
@@ -325,7 +326,7 @@ describe('#8 row toggles through the rows file', () => {
     expect(world.reads).not.toContain('/proc/stat')
     expect(world.reads).not.toContain('/proc/meminfo')
     const parts = await paneView($)
-    expect(parts.cards.map(c => c.title)).toEqual(['', 'CONTEXT', '5H', '7D', 'COST', 'ACTIVITY', 'SYSTEM'])
+    expect(parts.cards.map(c => c.title)).toEqual(['', 'PROGRESS', 'CONTEXT', '5H', '7D', 'COST', 'ACTIVITY', 'SYSTEM'])
     expect(cardOf(parts, 'SYSTEM').body).toEqual([pair('mcp', '2/3  figma ✗', 83), pair('memory', 'global · project · 3 rules', 83)])
     expect(parts.footer).toEqual([])
   })
@@ -335,6 +336,7 @@ describe('#8 row toggles through the rows file', () => {
     const parts = await paneView($, 49)
     expect(parts.cards.map(c => [c.title, c.width])).toEqual([
       ['', 47],
+      ['PROGRESS', 47],
       ['CONTEXT', 47],
       ['5H', 23],
       ['7D', 23],
@@ -347,7 +349,7 @@ describe('#8 row toggles through the rows file', () => {
   test('cost off leaves the tokens row, usage off the $ row: the card is TOKENS or COST, and with both off it is gone', async ($, on) => {
     await boot($, on, w => w.files.set(ROWS_FILE, '{"cost":false}'))
     const costOff = await paneView($)
-    expect(costOff.cards.map(c => c.title)).toEqual(['', 'CONTEXT', '5H', '7D', 'TOKENS', 'GIT', 'ACTIVITY', 'SYSTEM'])
+    expect(costOff.cards.map(c => c.title)).toEqual(['', 'PROGRESS', 'CONTEXT', '5H', '7D', 'TOKENS', 'GIT', 'ACTIVITY', 'SYSTEM'])
     expect(cardOf(costOff, 'TOKENS').body).toEqual(['─'.repeat(25), `tokens${' '.repeat(4)} 32.0K≈  33.5K≈`])
     expect(cardOf(costOff, 'TOKENS').value).toBe('session   total')
   })
@@ -355,14 +357,14 @@ describe('#8 row toggles through the rows file', () => {
   test('usage off leaves the $ row under COST, and takes CONTEXT with it', async ($, on) => {
     await boot($, on, w => w.files.set(ROWS_FILE, '{"usage":false}'))
     const usageOff = await paneView($)
-    expect(usageOff.cards.map(c => c.title)).toEqual(['', '5H', '7D', 'COST', 'GIT', 'ACTIVITY', 'SYSTEM'])
+    expect(usageOff.cards.map(c => c.title)).toEqual(['', 'PROGRESS', '5H', '7D', 'COST', 'GIT', 'ACTIVITY', 'SYSTEM'])
     expect(cardOf(usageOff, 'COST').body).toEqual(['─'.repeat(25), `$${' '.repeat(10)}   3.50  10.25`])
   })
 
   test('with cost and usage both off there is no COST or TOKENS card', async ($, on) => {
     await boot($, on, w => w.files.set(ROWS_FILE, '{"cost":false,"usage":false}'))
     const both = await paneView($)
-    expect(both.cards.map(c => c.title)).toEqual(['', '5H', '7D', 'GIT', 'ACTIVITY', 'SYSTEM'])
+    expect(both.cards.map(c => c.title)).toEqual(['', 'PROGRESS', '5H', '7D', 'GIT', 'ACTIVITY', 'SYSTEM'])
   })
 })
 
@@ -377,7 +379,7 @@ describe('#10 what the pane hands the surface', () => {
     for (const card of parts.cards) {
       expect(card.node.props).toMatchObject({ borderStyle: 'round', borderColor: 'gray', paddingX: 1, flexDirection: 'column' })
     }
-    expect(parts.cards.map(c => c.width)).toEqual([87, 29, 28, 28, 29, 28, 28, 87])
+    expect(parts.cards.map(c => c.width)).toEqual([87, 87, 29, 28, 28, 29, 28, 28, 87])
     await ui.unmount()
   })
 

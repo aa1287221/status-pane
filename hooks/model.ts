@@ -1,6 +1,6 @@
 // Pure functions behind status-pane: no $ calls, so every path runs offline.
 
-import type { AgentGroup, CpuSample, HookVerdicts, McpInfo, MemInfo, RowKey, Snap, Toggles } from './state'
+import type { AgentGroup, CpuSample, HookVerdicts, McpInfo, MemInfo, NowState, Res, RowKey, Snap, Toggles, ToolRun } from './state'
 
 /** The first line of a failure, less the `<plugin>: $.fs.read: ` the engine puts in front of a refused call. */
 export const why = (err: unknown): string => {
@@ -207,6 +207,7 @@ export const ROW_KEYS: readonly RowKey[] = [
   'sys',
   'edited',
   'history',
+  'progress',
   'fixture',
 ]
 
@@ -591,3 +592,60 @@ export const tailText = (snap: Snap | null, nowMs: number, tzMin?: number): stri
 
 export const mergeTail = (upstream: string | undefined, ours: string): string =>
   upstream ? `${upstream}${TAIL_SEP}${ours}` : ours
+
+// ---- progress: the NOW row and /progress read the same view ----
+
+export const NOW_MAX_CALLS = 16
+export const PROGRESS_SHOWN = 3
+
+export type Progress = { running: { tool: string; sec: number }[]; more: number }
+
+const TOOL_NAME_MAX = 80
+
+/** The run a main-loop call starts; a subagent's tool is not what the session is doing now. */
+export const runOf = (e: { tool: string; tool_use_id?: string; agentId?: string }, now: number): ToolRun | null =>
+  e.agentId !== undefined || typeof e.tool !== 'string' || e.tool === ''
+    ? null
+    : { id: e.tool_use_id ?? `${e.tool}@${now}`, tool: e.tool.slice(0, TOOL_NAME_MAX), startedAt: now }
+
+/** The calls of `sid` plus this one; a record of another session is dropped, not carried over. */
+export const addRun = (s: NowState | null, sid: string, run: ToolRun): NowState => {
+  const kept = s && s.sid === sid ? s.calls.filter(c => c.id !== run.id) : []
+  return { sid, calls: [...kept, run].slice(-NOW_MAX_CALLS) }
+}
+
+/** An end under another session id leaves the record as it is: it is not ours to change. */
+export const dropRun = (s: NowState | null, sid: string, id: string): NowState | null =>
+  s && s.sid === sid ? { sid, calls: s.calls.filter(c => c.id !== id) } : s
+
+export const fmtElapsed = (sec: number): string => {
+  const s = Number.isFinite(sec) ? Math.max(0, Math.floor(sec)) : 0
+  const two = (n: number) => String(n).padStart(2, '0')
+  if (s < 60) return `${s}s`
+  if (s < 3600) return `${Math.floor(s / 60)}m${two(s % 60)}s`
+  return `${Math.floor(s / 3600)}h${two(Math.floor((s % 3600) / 60))}m`
+}
+
+/** What NOW shows at `nowMs`: the main loop's calls oldest first, or why that is unknown. Card and /progress both read this. */
+export const progressOf = (tools: Res<NowState | null>, sid: Res<string>, nowMs: number): Res<Progress> => {
+  if (!tools.ok) return { ok: false, why: tools.why }
+  if (!sid.ok) return { ok: false, why: sid.why }
+  if (tools.v === null) return { ok: false, why: '本次載入後還沒有工具紀錄' }
+  if (tools.v.sid !== sid.v) return { ok: false, why: '紀錄屬於另一個 session' }
+  const all = [...tools.v.calls].sort((a, b) => a.startedAt - b.startedAt)
+  const running = all.slice(0, PROGRESS_SHOWN).map(c => ({ tool: c.tool, sec: Math.max(0, Math.floor((nowMs - c.startedAt) / 1000)) }))
+  return { ok: true, v: { running, more: all.length - running.length } }
+}
+
+/** The lines of `/progress`: where the card is not drawn it says why, else the rows of the card as plain text. */
+export const progressText = (snap: Snap | null, tools: Res<NowState | null>, sid: Res<string>, nowMs: number): string => {
+  if (!snap) return 'progress n/a（等待第一次更新）'
+  if (!snap.toggles.enabled) return 'progress n/a（status-pane 已停用）'
+  if (!snap.toggles.rows.progress) return 'progress n/a（progress 列已在 rows 檔關閉）'
+  const p = progressOf(tools, sid, nowMs)
+  if (!p.ok) return `NOW  n/a（${p.why}）`
+  if (p.v.running.length === 0) return 'NOW  idle'
+  const rows = p.v.running.map(r => `${r.tool} ${fmtElapsed(r.sec)}`)
+  if (p.v.more > 0) rows.push(`+${p.v.more} more`)
+  return rows.map((r, i) => `${i === 0 ? 'NOW ' : '    '} ${r}`).join('\n')
+}

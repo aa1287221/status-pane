@@ -14,23 +14,33 @@ import {
   fmtReset5h,
   fmtReset7d,
   fmtResetClock,
+  fmtElapsed,
   fmtTok,
   knownContextPct,
   pctColor,
+  progressOf,
   staleness,
 } from './model'
-import type { Tone } from './model'
+import type { Progress, Tone } from './model'
 import { ageText } from './sidefile'
-import type { AgentGroup, Snap } from './state'
+import type { AgentGroup, NowState, Res, Snap } from './state'
 
 export type Seg = { text: string; color?: string; dim?: boolean; bold?: boolean }
 export type Line = Seg[]
 export type Tier = 'narrow' | 'medium' | 'wide'
 
 /** `raster` says the surface draws a Raster; `cpuHist` is the sample ring. */
-export type PaneView = { columns: number; nowMs: number; tzMin?: number; raster?: boolean; cpuHist?: readonly number[] }
+export type PaneView = {
+  columns: number
+  nowMs: number
+  tzMin?: number
+  raster?: boolean
+  cpuHist?: readonly number[]
+  /** What the PROGRESS card is drawn from; without it the card is left out. */
+  progress?: { tools: Res<NowState | null>; sid: Res<string> }
+}
 
-export type CardId = 'header' | 'context' | '5h' | '7d' | 'cost' | 'git' | 'activity' | 'system' | 'fixture' | 'status'
+export type CardId = 'header' | 'context' | '5h' | '7d' | 'cost' | 'git' | 'activity' | 'system' | 'progress' | 'fixture' | 'status'
 
 /** A body row: a label/value split, a left-packed line, a gauge (`null` is the bare track), or the CPU chart row. */
 export type CardRow =
@@ -300,7 +310,7 @@ export const sparkText = (samples: readonly number[], columns: number): string =
 
 // ---- cards ----
 
-type Ctx = { w: number; tier: Tier; nowMs: number; tzMin: number | undefined; raster: boolean; hist: readonly number[] }
+type Ctx = { w: number; tier: Tier; nowMs: number; tzMin: number | undefined; raster: boolean; hist: readonly number[]; progress: Res<Progress> | null }
 
 const innerOf = (width: number): number => width - 4
 
@@ -495,6 +505,21 @@ const gitCard = (snap: Snap, width: number, inner: number): Card => {
     }
   }
   return { id: 'git', width, rows }
+}
+
+/** NOW: the main loop's calls in flight, oldest first, each with its elapsed time at this draw; the row `/progress` prints as text. */
+const progressCard = (width: number, inner: number, p: Res<Progress>): Card => {
+  const rows: CardRow[] = [titleRow('PROGRESS', null, inner)]
+  if (!p.ok) return { id: 'progress', width, rows: [...rows, ...naRows(`n/a（${p.why}）`, inner)] }
+  if (p.v.running.length === 0) return { id: 'progress', width, rows: [...rows, ...kv('NOW', [dim('idle')], inner)] }
+  p.v.running.forEach((r, i) => {
+    const elapsed = fmtElapsed(r.sec)
+    // a name too long for the row loses its head: the end of an mcp tool name is the part that tells
+    const name = clipStart(r.tool, Math.max(2, inner - dw('NOW') - GAP - 1 - dw(elapsed)))
+    rows.push({ kind: 'split', parts: [i === 0 ? [dim('NOW')] : [], [plain(name), plain(' '), seg(elapsed, { color: 'yellow' })]] })
+  })
+  if (p.v.more > 0) rows.push({ kind: 'split', parts: [[], [dim(`+${p.v.more} more`)]] })
+  return { id: 'progress', width, rows }
 }
 
 /** The demo card of the side file path: the count the file holds, its age at this draw and when it was observed. */
@@ -870,7 +895,7 @@ export const paneLayout = (snap: Snap | null, view: PaneView): Layout => {
     if (!snap) return statusLayout(view, w, 'waiting for the first refresh')
     if (!snap.toggles.enabled) return statusLayout(view, w, ROWS_FILE_HINT)
     const tier = tierOf(w)
-    const c: Ctx = { w, tier, nowMs: view.nowMs, tzMin: view.tzMin, raster: view.raster === true, hist: view.cpuHist ?? [] }
+    const c: Ctx = { w, tier, nowMs: view.nowMs, tzMin: view.tzMin, raster: view.raster === true, hist: view.cpuHist ?? [], progress: view.progress ? progressOf(view.progress.tools, view.progress.sid, view.nowMs) : null }
     const on = snap.toggles.rows
     const present: Record<BandId, boolean> = {
       context: on.usage,
@@ -880,14 +905,15 @@ export const paneLayout = (snap: Snap | null, view: PaneView): Layout => {
       git: on.dir || on.repo,
       activity: on.agents || on.edited,
       system: on.sys || on.memory_mcp,
+      progress: on.progress && c.progress !== null,
       fixture: snap.fixture !== undefined,
     }
     const bands: BandId[][] =
       tier === 'narrow'
-        ? [['context'], ['5h'], ['7d'], ['cost'], ['git'], ['activity'], ['system'], ['fixture']]
+        ? [['progress'], ['context'], ['5h'], ['7d'], ['cost'], ['git'], ['activity'], ['system'], ['fixture']]
         : tier === 'medium'
-          ? [['context'], ['5h', '7d'], ['cost', 'git'], ['activity'], ['system'], ['fixture']]
-          : [['context', '5h', '7d'], ['cost', 'git', 'activity'], ['system'], ['fixture']]
+          ? [['progress'], ['context'], ['5h', '7d'], ['cost', 'git'], ['activity'], ['system'], ['fixture']]
+          : [['progress'], ['context', '5h', '7d'], ['cost', 'git', 'activity'], ['system'], ['fixture']]
     const build = (id: BandId, width: number): Card => {
       const inner = innerOf(width)
       if (id === 'context') return contextCard(snap, width, inner)
@@ -895,6 +921,7 @@ export const paneLayout = (snap: Snap | null, view: PaneView): Layout => {
       if (id === 'cost') return costCard(snap, width, inner)
       if (id === 'git') return gitCard(snap, width, inner)
       if (id === 'activity') return activityCard(snap, width, inner, c)
+      if (id === 'progress') return progressCard(width, inner, c.progress!)
       if (id === 'fixture') return fixtureCard(snap, width, inner, c)
       return systemCard(snap, width, inner, c, true)
     }
