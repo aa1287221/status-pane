@@ -80,6 +80,7 @@ export const makeSnap = (over: Partial<Snap> = {}): Snap => ({
       sys: true,
       edited: true,
       history: true,
+      fixture: false,
     },
   },
   summary: ok('遷移 statusline 到 mod pane 的討論與實作'),
@@ -439,7 +440,9 @@ export const installWorld = (on: On, world: World): { clock: MockClock; advance:
     if (gate) await gate
     if (world.denyRead.has(e.path)) return { deny: `EACCES: permission denied, open '${e.path}'` }
     const text = world.files.get(e.path)
-    return text === undefined ? { deny: `ENOENT: no such file or directory, open '${e.path}'` } : { value: text }
+    if (text === undefined) return { deny: `ENOENT: no such file or directory, open '${e.path}'` }
+    if (e.as === 'bytes') return { value: { base64: btoa(unescape(encodeURIComponent(text))) } }
+    return { value: text }
   })
   on('fs.write', async (_$, e) => {
     const gate = stallGate(world, 'fs.write:', e.path)

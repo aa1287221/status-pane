@@ -5,6 +5,7 @@ import { MCP_EVERY_MS, refresh } from './collect'
 import type { Io } from './collect'
 import { cannotDraw, DEAD_MS, effortFrom, mergeTail, patchLineCount, sidOf, STALE_MS, tailText } from './model'
 import { HIST_MAX, layoutTree, paneLayout } from './pane'
+import { bytesFromBase64 } from './sidefile'
 
 const PANE = 'status-pane'
 const TICK_MS = 30_000
@@ -52,6 +53,7 @@ const ioOf = ($: EngineInterface): Io => ({
   settings: source => $.settings.read(source ? { source } : undefined),
   exists: path => $.fs.exists(path),
   read: path => $.fs.read(path),
+  readBytes: async path => bytesFromBase64((await $.fs.read(path, { as: 'bytes' })).base64) ?? new Uint8Array(0),
   write: (path, text) => $.fs.write(path, text),
   list: path => $.fs.list(path),
   run: (argv, init) => $.process.run(argv, init),

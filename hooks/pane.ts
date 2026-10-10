@@ -20,6 +20,7 @@ import {
   staleness,
 } from './model'
 import type { Tone } from './model'
+import { ageText } from './sidefile'
 import type { AgentGroup, Snap } from './state'
 
 export type Seg = { text: string; color?: string; dim?: boolean; bold?: boolean }
@@ -29,7 +30,7 @@ export type Tier = 'narrow' | 'medium' | 'wide'
 /** `raster` says the surface draws a Raster; `cpuHist` is the sample ring. */
 export type PaneView = { columns: number; nowMs: number; tzMin?: number; raster?: boolean; cpuHist?: readonly number[] }
 
-export type CardId = 'header' | 'context' | '5h' | '7d' | 'cost' | 'git' | 'activity' | 'system' | 'status'
+export type CardId = 'header' | 'context' | '5h' | '7d' | 'cost' | 'git' | 'activity' | 'system' | 'fixture' | 'status'
 
 /** A body row: a label/value split, a left-packed line, a gauge (`null` is the bare track), or the CPU chart row. */
 export type CardRow =
@@ -493,6 +494,25 @@ const gitCard = (snap: Snap, width: number, inner: number): Card => {
   return { id: 'git', width, rows }
 }
 
+/** The demo card of the side file path: the count the file holds, its age at this draw and when it was observed. */
+const fixtureCard = (snap: Snap, width: number, inner: number, c: Ctx): Card => {
+  const r = snap.fixture
+  if (!r) return { id: 'fixture', width, rows: [titleRow('FIXTURE', null, inner)] }
+  // the reader's text already reads `n/a（...）`
+  if (!r.ok) return { id: 'fixture', width, rows: [titleRow('FIXTURE', null, inner), ...naRows(r.why, inner)] }
+  const age = Math.max(0, Math.floor(c.nowMs / 1000 - r.v.observedAtSec))
+  return {
+    id: 'fixture',
+    width,
+    rows: [
+      titleRow('FIXTURE', plain(String(r.v.count)), inner),
+      ...kv('count', [plain(String(r.v.count))], inner),
+      ...kv('age', [plain(ageText(age))], inner),
+      ...kv('observed', [plain(fmtClock(r.v.observedAtSec * 1000, c.tzMin, true))], inner),
+    ],
+  }
+}
+
 /**
  * `label` and `items` packed into rows of `max` cells, a dim `sep` between the items: a row that breaks keeps the
  * separator at its end, and the rows after the first start under `indent`.
@@ -857,13 +877,14 @@ export const paneLayout = (snap: Snap | null, view: PaneView): Layout => {
       git: on.dir || on.repo,
       activity: on.agents || on.edited,
       system: on.sys || on.memory_mcp,
+      fixture: snap.fixture !== undefined,
     }
     const bands: BandId[][] =
       tier === 'narrow'
-        ? [['context'], ['5h'], ['7d'], ['cost'], ['git'], ['activity'], ['system']]
+        ? [['context'], ['5h'], ['7d'], ['cost'], ['git'], ['activity'], ['system'], ['fixture']]
         : tier === 'medium'
-          ? [['context'], ['5h', '7d'], ['cost', 'git'], ['activity'], ['system']]
-          : [['context', '5h', '7d'], ['cost', 'git', 'activity'], ['system']]
+          ? [['context'], ['5h', '7d'], ['cost', 'git'], ['activity'], ['system'], ['fixture']]
+          : [['context', '5h', '7d'], ['cost', 'git', 'activity'], ['system'], ['fixture']]
     const build = (id: BandId, width: number): Card => {
       const inner = innerOf(width)
       if (id === 'context') return contextCard(snap, width, inner)
@@ -871,6 +892,7 @@ export const paneLayout = (snap: Snap | null, view: PaneView): Layout => {
       if (id === 'cost') return costCard(snap, width, inner)
       if (id === 'git') return gitCard(snap, width, inner)
       if (id === 'activity') return activityCard(snap, width, inner, c)
+      if (id === 'fixture') return fixtureCard(snap, width, inner, c)
       return systemCard(snap, width, inner, c, true)
     }
     const blocks: Block[] = [{ kind: 'cards', gap: 1, cards: [headerCard(snap, c)] }]

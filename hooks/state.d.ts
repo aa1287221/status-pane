@@ -17,8 +17,9 @@ export type RowKey =
   | 'sys'
   | 'edited'
   | 'history'
+  | 'fixture'
 
-/** `~/.claude/cc-statusline-rows.json`: master switch plus one flag per row. */
+/** `~/.claude/cc-statusline-rows.json`: master switch plus one flag per row (`fixture` is off unless the file turns it on). */
 export type Toggles = { enabled: boolean; rows: Record<RowKey, boolean> }
 
 export type GitCounts = { added: number; modified: number; untracked: number }
@@ -62,6 +63,8 @@ export type Snap = {
   memory: Res<string[]>
   mcp: Res<McpInfo | null>
   edited: Res<string[]>
+  /** The side file demo card (SCHEMA.md kind `fixture`); absent unless the `fixture` row is on. `observedAtSec` is epoch seconds. */
+  fixture?: Res<{ count: number; observedAtSec: number }>
   /** What the settings said of the tracker hooks at this refresh; kept when a later read fails. */
   hooks: HookVerdicts
 }
