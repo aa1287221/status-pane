@@ -202,4 +202,20 @@ describe('the fixture card: side file to card through the engine', () => {
     const { world } = await boot($, on, withFile(valid, '{"enabled":false,"fixture":true}'))
     expect(world.reads).not.toContain(PATH)
   })
+
+  test('a file past 64 KiB is corrupt and is never read', async ($, on) => {
+    const { world } = await boot($, on, w => {
+      withFile(valid.replace('"data"', `"pad":"${'x'.repeat(70_000)}","data"`))(w)
+    })
+    expect(cardOf(await paneView($, 89), 'FIXTURE').body.join('').replace(/\s/g, '')).toBe('n/a（檔案損毀或被截斷）')
+    expect(world.reads).not.toContain(PATH)
+  })
+
+  test('bidi controls in a reason are not drawn', () => {
+    const bidi = [0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069, 0x200e, 0x200f].map(c => String.fromCodePoint(c)).join('')
+    const text = `n/a（收集失敗：a${bidi}b）`
+    const raw = JSON.stringify(cardsAt(naSnap(text), 89))
+    expect(raw).toContain('ab')
+    for (const ch of bidi) expect(raw.includes(ch)).toBe(false)
+  })
 })

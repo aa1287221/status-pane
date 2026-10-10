@@ -7,6 +7,8 @@ import {
   SKEW_SEC,
   ageText,
   bytesFromBase64,
+  naReason,
+  readBytesCapped,
   fixtureOf,
   parseSideName,
   parseStamp,
@@ -826,5 +828,36 @@ describe('side file reader: the fixture card data', () => {
       expect([String(v), r.ok]).toEqual([String(v), v === -1])
       if (!r.ok) expect(r.why).toMatch(/^n\/a（格式錯誤：data\.count/)
     }
+  })
+})
+
+describe('side file reader: size before bytes, and reasons in the contract form', () => {
+  const fsOf = (size: number, calls: string[]) => ({
+    stat: async (p: string) => (calls.push(`stat ${p}`), { size }),
+    read: async (p: string) => (calls.push(`read ${p}`), { base64: btoa('hi') }),
+  })
+
+  test('readBytesCapped: over 64 KiB is refused on the size, and the file is never read', async () => {
+    const calls: string[] = []
+    await expect(readBytesCapped(fsOf(SIDE_MAX_BYTES + 1, calls), '/x')).rejects.toThrow()
+    expect(calls).toEqual(['stat /x'])
+  })
+
+  test('readBytesCapped: exactly 64 KiB is read and decoded', async () => {
+    const calls: string[] = []
+    expect([...(await readBytesCapped(fsOf(SIDE_MAX_BYTES, calls), '/x'))]).toEqual([104, 105])
+    expect(calls).toEqual(['stat /x', 'read /x'])
+  })
+
+  test('bytesFromBase64: a string longer than 64 KiB can encode is refused before decoding', () => {
+    const limit = 4 * Math.ceil(SIDE_MAX_BYTES / 3)
+    expect(bytesFromBase64('A'.repeat(limit))).not.toBeNull()
+    expect(bytesFromBase64('A'.repeat(limit + 4))).toBeNull()
+  })
+
+  test('naReason: the reader text stays, anything else is wrapped', () => {
+    expect(naReason('n/a（缺檔）')).toBe('n/a（缺檔）')
+    expect(naReason('timeout')).toBe('n/a（timeout）')
+    expect(naReason('')).toBe('n/a（）')
   })
 })

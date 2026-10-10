@@ -434,6 +434,11 @@ export const installWorld = (on: On, world: World): { clock: MockClock; advance:
   on('fs.exists', (_$, e) => ({
     value: world.files.has(e.path) || [...world.files.keys()].some(k => k.startsWith(`${e.path}/`)),
   }))
+  on('fs.stat', (_$, e) => {
+    const text = world.files.get(e.path)
+    if (text === undefined) return { deny: `ENOENT: no such file or directory, stat '${e.path}'` }
+    return { value: { kind: 'file', size: new TextEncoder().encode(text).length, mtimeMs: 0, isLink: false } }
+  })
   on('fs.read', async (_$, e) => {
     world.reads.push(e.path)
     const gate = world.stalls.get(`fs.read:${e.path}`)?.shift()

@@ -129,8 +129,11 @@ nowMs)` and `readSideKind(io, kind, loc, name, nowMs)` judge a file by the eight
 the data (`verdict: 'ok'`) or an n/a with the contract's text (`n/a（缺檔）`, `n/a（過期 4h）`, ...). They never throw: a
 refused `exists` or read, a wrong type from the seam, an invalid clock or a hostile document is a classified n/a.
 
-- Seam: `SideIo { exists, readBytes }`; `Io.readBytes` is `$.fs.read(path, { as: 'bytes' })` decoded by a pure
-  base64 decoder. The reader checks the 64 KiB limit on bytes, strict UTF-8, the raw literal of the top-level
+- Seam: `SideIo { exists, readBytes }`; `Io.readBytes` is `$.fs.stat` (a file over 64 KiB is refused unread) then
+  `$.fs.read(path, { as: 'bytes' })` decoded by a pure base64 decoder that refuses a text longer than 64 KiB can
+  encode. The `{ base64 }` shape is specified by the engine typings; it is not yet run on a live engine (the test
+  kit's fake in `fixture.ts` is our own, so it proves self-consistency only). Reasons that do not come from the
+  reader (a guard timeout, a failed dependency) are shown as `n/a（...）`, and bidi controls are not drawn. The reader checks the 64 KiB limit on bytes, strict UTF-8, the raw literal of the top-level
   `schema_version` (`JSON.parse` cannot tell `1.0` from `1`), a real calendar for every stamp (no `Date.parse`:
   it rolls `2026-02-30` over), code points for `error.message`, and the 300 s clock-ahead tolerance.
 - Verdicts beyond the contract's seven, decided before anything is opened: `bad_name` (file name outside the

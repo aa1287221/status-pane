@@ -33,7 +33,7 @@ import {
   step,
   why,
 } from './model'
-import { fixtureOf, readSideKind } from './sidefile'
+import { fixtureOf, naReason, readSideKind } from './sidefile'
 import type { Cum, RlField, RlSnap, RlSnaps, RlWindow } from './model'
 import type { CpuSample, GitCounts, GitInfo, HookVerdicts, QuotaWindow, Res, Snap, Toggles } from './state'
 
@@ -526,7 +526,7 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
     hooks,
   }
   // the reader's own text is the reason (never cut to a short one); absent when the row is off
-  if (on.fixture) snap.fixture = side.ok ? fixtureOf(side.v) : side
+  if (on.fixture) snap.fixture = side.ok ? fixtureOf(side.v) : { ok: false, why: naReason(side.why) }
   // a failure behind a row that is switched off is nothing to report; git counts when its status failed
   const shown: [Res<unknown>, boolean][] = [
     [snap.summary, on.summary],

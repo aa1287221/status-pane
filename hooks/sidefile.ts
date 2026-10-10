@@ -109,11 +109,26 @@ export const sideFilePath = (kind: string, loc: SideLoc, name: SideName = {}): s
 
 // ---- bytes ----
 
+/** Stats before reading so a file past the limit is never pulled in; throws when it is too big. */
+export const readBytesCapped = async (
+  fs: { stat: (p: string) => Promise<{ size: number }>; read: (p: string) => Promise<{ base64: string }> },
+  path: string,
+): Promise<Uint8Array> => {
+  if ((await fs.stat(path)).size > SIDE_MAX_BYTES) throw new Error('over the size limit')
+  return bytesFromBase64((await fs.read(path)).base64) ?? new Uint8Array(0)
+}
+
+/** A reason as the card shows it: the reader's own `n/a（...）` text stays, any other is wrapped in that form. */
+export const naReason = (why: string): string => (why.startsWith('n/a（') ? why : `n/a（${why}）`)
+
+/** The longest base64 text a 64 KiB file can have; anything longer is not decoded. */
+const B64_MAX = 4 * Math.ceil(SIDE_MAX_BYTES / 3)
+
 const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 
 /** Standard padded base64 to bytes; null for anything else. No atob: the engine's worker may not have it. */
 export const bytesFromBase64 = (text: unknown): Uint8Array | null => {
-  if (typeof text !== 'string' || text.length % 4 !== 0) return null
+  if (typeof text !== 'string' || text.length % 4 !== 0 || text.length > B64_MAX) return null
   const pad = text.endsWith('==') ? 2 : text.endsWith('=') ? 1 : 0
   const body = text.slice(0, text.length - pad)
   const out = new Uint8Array((text.length / 4) * 3 - pad)
