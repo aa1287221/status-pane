@@ -21,7 +21,7 @@ No `AbovePrompt` band: tw-stock-mod already answers that site without calling `n
   hooks/register.tsx           wiring: events, timers, render hooks, and `ioOf($)`, the `Io` seam
   hooks/collect.ts             collectors (usage, git, /proc, side files, mcp, memory); they take `Io`, never `$`
   hooks/model.ts               pure functions: the tail; step(); aggMax(); countdown; cpu delta; meminfo;
-                               patch line count; formatters; staleness; sid
+                               patch line count; formatters; staleness; sid; the progress view (`progressOf`, `progressText`)
   hooks/pane.ts                pure view: snapshot -> `Layout` (cards as plain data) -> engine elements
                                (`paneLayout`, `layoutTree`); gauge and chart Raster encoders; text fitting
   hooks/state.d.ts             $.state contract and the snapshot types (a hooks/-located contract is accepted)
@@ -29,7 +29,7 @@ No `AbovePrompt` band: tw-stock-mod already answers that site without calling `n
   hooks/sidefile.fixtures.ts   test-only: embedded copies of the hub's hand-written fixtures (hub commit 6098494)
   hooks/fixture.ts             test-only fake machine; register.tsx never imports it
   hooks/tree.ts                test-only: reads a drawn tree back as text and cards (shares nothing with pane.ts)
-  hooks/*.test.ts              `claude plugin test` suites
+  hooks/*.test.ts              `claude plugin test` suites (`progress.test.ts`: the PROGRESS card and `/progress`)
   hooks/SPEC.md                this file
 ```
 
@@ -91,6 +91,42 @@ switch). The
 `agy-*` tmp-file prefix `statusline.js` tries first is not mirrored: a Claude session id has no
 such files, and agy is out of scope.
 
+## Progress (the PROGRESS card and `/progress`)
+
+Source: the plugin's own `tool.call` hook, not a tracker file. A call of the main loop (`e.agentId`
+absent; a subagent's tool is not what the session is doing, and a main-loop `Agent` call is the
+truthful NOW while it runs) is written to `$.state` `status-pane.now` = `{ sid, calls: [{ id, tool,
+startedAt }] }` before `next(e)` and removed in a `finally` after it, so a denied or throwing call
+still ends. Only the tool name is kept (<= 80 chars), never its arguments. Calls are keyed by
+`tool_use_id` (parallel calls sit side by side, at most 16 kept), the record belongs to a session id
+like the other counters, and `session.start` and the main loop's `turn.complete` reset it to idle
+(the net for an end that was never seen). The bookkeeping keeps counting under the master switch,
+like the pending lines; the card is then not drawn.
+
+**One view, two renderers.** `progressOf(tools, sid, nowMs)` returns `Res<{ running, more }>`: the
+calls oldest first (three at most, the rest counted in `more`) with the elapsed time at the draw
+clock (never negative). The card (`progressCard`) and `/progress` (`progressText`) both read it, so
+they cannot disagree. Each missing source is its own n/a, never idle or 0: the record cannot be
+read (`工具紀錄讀不到：...`), the session id cannot (`session id 讀不到：...`), nothing was recorded
+since the plugin loaded (`本次載入後還沒有工具紀錄`), the record belongs to another session
+(`紀錄屬於另一個 session`).
+
+- **Card.** `PROGRESS`, a band of its own right after the header at every tier (full width), on
+  by default (row key `progress`). Rows: `NOW` with `<tool> <elapsed>` against the right edge, one row per
+  call (the label on the first), `+N more` past three; `NOW idle` when nothing runs; the reason in
+  full as `n/a（原因）` under the title otherwise. A tool name too long for its row loses its head. The
+  elapsed time reads `12s`, `1m05s`, `1h02m`. The card is the place #16 and #52 add their rows to.
+  `paneLayout` draws it only when the caller hands over `view.progress`; the Pane hook always does.
+- **Repaint.** While a call is in flight a `$.clock.every(2000)` repaint (`ui.invalidate`) moves the
+  elapsed time; it is cancelled when the last call ends. The 2 s period is a choice, not a measurement.
+- **`/progress`.** Registered in `session.start` with `immediate: true` (a `/progress` typed while a
+  turn streams runs at once; #9 probe on 2.1.296: accepted, `command.describe` reads it, 0 model
+  calls; the mid-turn timing could not be observed in `-p`, see Acceptance). The hook reads `snap`,
+  the `now` record and the clock only: no `usage()`, no refresh, nothing of the turn's state. Its
+  text is `progressText`: the card's rows as plain lines (`NOW  Bash 2m10s`, then `     Read 12s`...,
+  `NOW  idle`, `NOW  n/a（原因）`); where the card is not drawn it says so (`progress n/a（等待第一次更新）`,
+  `（status-pane 已停用）`, `（progress 列已在 rows 檔關閉）`). A throw is one `progress n/a（cannot draw: ...）` line.
+
 ## Dependencies
 
 The agents, edited, summary and compact data come from tracker hooks in the settings, the mcp data from a
@@ -133,16 +169,16 @@ refused `exists` or read, a wrong type from the seam, an invalid clock or a host
   `$.fs.read(path, { as: 'bytes' })` decoded by a pure base64 decoder that refuses a text longer than 64 KiB can
   encode. The `{ base64 }` shape is specified by the engine typings; it is not yet run on a live engine (the test
   kit's fake in `fixture.ts` is our own, so it proves self-consistency only). Reasons that do not come from the
-  reader (a guard timeout, a failed dependency) are shown as `n/a（...）`, and bidi controls are not drawn. The reader checks the 64 KiB limit on bytes, strict UTF-8, the raw literal of the top-level
+  reader (a guard timeout, a failed dependency) are shown as `n/a（...）`, and bidi controls (U+061C, U+200E/F, U+202A-E, U+2066-9) are not drawn. The reader checks the 64 KiB limit on bytes, strict UTF-8, the raw literal of the top-level
   `schema_version` (`JSON.parse` cannot tell `1.0` from `1`), a real calendar for every stamp (no `Date.parse`:
-  it rolls `2026-02-30` over), code points for `error.message`, and the 300 s clock-ahead tolerance.
+  it rolls `2026-02-30` over), code points for `error.message`, and the 300 s clock-ahead tolerance, and for a kind with `intFields` (`fixture`: `count`) the raw literal of `data.<field>` (`3.0`, `3e0` are malformed; checked after staleness and failure, so an old file still reads stale).
 - Verdicts beyond the contract's seven, decided before anything is opened: `bad_name` (file name outside the
   grammar), `unknown_kind` (not in the registry, section 9) and `no_clock`.
 - Paths: `local` kinds under `$TMPDIR/claude-side/` (`/tmp` when unset or empty), `synced` under
   `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/-project/references/side-files/`. Only `local` is read by the pane
   today; there is no directory listing and no multi-host merge (section 7.1) yet.
 - **FIXTURE card** (the proof of the path, kind `fixture`, `$TMPDIR/claude-side/fixture.json`, TTL 600 s): off
-  unless the rows file has `"fixture": true` (the only opt-in row: no producer exists on a normal machine). A band
+  unless the rows file has `"fixture": true`, the boolean only (`1`, `"yes"` leave it off; the only opt-in row: no producer exists on a normal machine). A band
   of its own, last, across the whole width at every tier. Title value and `count`, `age` (at the draw, so it keeps
   counting between refreshes) and `observed` (local clock); any other verdict is the reader's text, wrapped and read
   in full, with no data of the file. A failing fixture counts as one error like any row that is on.
@@ -210,9 +246,9 @@ and cost agree: `tok` (the native steps cumulative in+out, the mod `context.toke
 
 | tier | w | cards |
 |---|---|---|
-| narrow | below 40 | header, CONTEXT, 5H, 7D, COST, GIT, ACTIVITY, SYSTEM, one under another at full width |
-| medium | 40 to 79 | header and CONTEXT full width, 5H beside 7D, COST beside GIT (COST wider, see COST), then ACTIVITY and SYSTEM full width |
-| wide | 80 and up | the header, then CONTEXT, 5H, 7D across, COST, GIT, ACTIVITY across, and SYSTEM across the whole width |
+| narrow | below 40 | header, PROGRESS, CONTEXT, 5H, 7D, COST, GIT, ACTIVITY, SYSTEM, one under another at full width |
+| medium | 40 to 79 | header, PROGRESS and CONTEXT full width, 5H beside 7D, COST beside GIT (COST wider, see COST), then ACTIVITY and SYSTEM full width |
+| wide | 80 and up | the header, PROGRESS across the whole width, then CONTEXT, 5H, 7D across, COST, GIT, ACTIVITY across, and SYSTEM across the whole width |
 
   Cards of a band share `w` with one cell between them (`columnGap: 1`), the left ones taking the odd
   cells: `splitWidths(87, 3)` is 29, 28, 28. A band with a card hidden gives its width to the others;
@@ -605,6 +641,13 @@ Card     Box width round gray paddingX=1 column               (Section: Box widt
 | 49 | reader never throws | refused or throwing `exists`/read, a non-bytes answer, a path or clock that is not valid, empty/blank/BOM, trailing content, NaN, a non-object, 60k-deep nesting, 64 KiB exactly vs one byte more (bytes, not characters), every kind of broken UTF-8, `__proto__` keys; a name outside the grammar or an unregistered kind is not opened |
 | 50 | locations and names | the grammar both ways, `local` and `synced` paths with the TMPDIR / CLAUDE_CONFIG_DIR fallbacks, a name part that would not parse back gives null, the host of a synced name equals `producer.host` |
 | 51 | FIXTURE card at the three layouts | bodyColumns 36 / 49 / 89 (1, 2, 3 across): a card across the whole width, `count`, `age`, `observed`, on every surface; every manifest case is the contract text with no count, age or clock rows and no overflow; a long reason is read to its end; the age follows the draw clock; off by default and switched off by the rows file: no card and the file is never read; a refused read is corrupt and the rest draws; TMPDIR honoured; one error when it fails, none when healthy; the master switch collects nothing |
+| 52 | tool bookkeeping | `runOf`: a main-loop call becomes a run, a subagent's (`agentId`), a nameless one and a missing id are handled, a name is cut at 80; `addRun` / `dropRun`: parallel calls side by side, an end seen twice or never changes nothing, another session id starts over and an end under it leaves the record alone, at most 16 kept |
+| 53 | elapsed text | `0s`, `59s`, `1m00s`, `59m59s`, `1h00m`; negative and NaN read `0s` |
+| 54 | the progress view | oldest first, elapsed at the draw clock, a clock behind the start reads 0s; more than three: three and a count; nothing running is `idle`, not n/a; each missing source (record, session id, never recorded, **another session's record**) is n/a with its own reason; mutation: removing the other-session check turns `progress: the view > records of another session are n/a, never shown as running` red (the view returns `running` for the other session's call) |
+| 55 | PROGRESS card at the three layouts | bodyColumns 36 / 49 / 89: a band of its own after the header across the whole width; `NOW`, tool and elapsed; idle; every n/a keeps its frame and is read in full; four or five calls: three rows and `+N more`; a long name loses its head, the elapsed time stays; nothing overflows; no card without `view.progress` or with the `progress` row off |
+| 56 | `/progress` is the card's view | the text's rows equal the card's rows at the three widths (running, parallel, idle); where the card is not drawn the text says why |
+| 57 | through the engine | `/progress` registered with `immediate: true` (the other command without); a fresh session reads idle on every surface; a held `tool.call` shows with its elapsed time at 36 / 49 / 89 and goes when it ends; the same view answers `/progress` mid-call with no `usage()` call; overlapping calls end in either order; a denied call still ends; `turn.complete` clears an unseen end; the 2 s repaint runs while a call is in flight and stops with it; before the first refresh `/progress` says `等待第一次更新` |
+| 58 | #26 follow-ups | `data.count` as `3.0` / `3e0` / `30e-1` is malformed with its own text and never shown, plain integers still read, an old file with a bad count is stale, a decoy `count` elsewhere does not stand in; an opt-in row turns on only for boolean true (`1`, `"yes"`, `"true"`, `[1]` leave it off) while a default-on row keeps the loose reading; U+061C in a reason is not drawn |
 
 ## Acceptance
 
@@ -613,6 +656,11 @@ Card     Box width round gray paddingX=1 column               (Section: Box widt
   path matrix has a test.
 - Type-check passes (scratch `tsconfig.json` outside the plugin folder per the skill, or
   `tsc -p` once the engine has laid `.claude-plugin/types/`).
+- Manual TUI check (main session, needs a real turn: `-p` cannot tell): start a turn that runs a long tool
+  (`Bash` `sleep 60`), type `/progress` **while it runs**. Expect the answer at once (not after the turn),
+  `NOW  Bash <n>s`, the same tool and time as the PROGRESS card, and no model call (cost and the
+  transcript unchanged). If it only appears after the turn, register it as a plain command and record the
+  limit on #15.
 - Live probe (main session): loaded through `CLAUDE_CODE_PLUGIN_DIRS`, with the real
   `statusline.js` beside it, the context %, 5h %, 7d % and session cost agree (tokens, duration
   and lines drift while both write the cum file: see above); pane and tail draw at 200 columns,
