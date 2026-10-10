@@ -35,7 +35,9 @@ describe('progress: the bookkeeping of calls', () => {
     expect(runOf({ tool: 'Bash', tool_use_id: 'u1' }, T0)).toEqual({ id: 'u1', tool: 'Bash', startedAt: T0 })
     expect(runOf({ tool: 'Bash', tool_use_id: 'u1', agentId: 'a1' }, T0)).toBeNull()
     expect(runOf({ tool: '' }, T0)).toBeNull()
-    expect(runOf({ tool: 'Read' }, T0)?.id).toBe(`Read@${T0}`)
+    expect(runOf({ tool: 'Read' }, T0)?.id.startsWith(`Read@${T0}`)).toBe(true)
+    // two nameless-id calls of one tool in the same millisecond do not collide
+    expect(runOf({ tool: 'Read' }, T0)?.id).not.toBe(runOf({ tool: 'Read' }, T0)?.id)
     expect(runOf({ tool: 'x'.repeat(500), tool_use_id: 'u' }, T0)?.tool.length).toBe(80)
   })
 
@@ -273,12 +275,40 @@ describe('through the engine: tool.call bookkeeping, the pane and /progress', ()
     expect((await $.command.run(PROGRESS)).text).toBe('NOW  idle')
   })
 
-  test('a call that is denied or throws still ends', async ($, on) => {
+  test('a call that is denied still ends', async ($, on) => {
     const { world, clock } = await boot($, on, w => (w.now = T0))
     world.toolResult = () => ({ deny: 'no' })
     await $.tool.call({ tool: 'Bash', command: 'a' })
     await settle(clock)
     expect((await $.command.run(PROGRESS)).text).toBe('NOW  idle')
+  })
+
+  test('a call whose next() throws still ends', async ($, on) => {
+    const { world, clock } = await boot($, on, w => (w.now = T0))
+    world.toolResult = () => {
+      throw new Error('boom')
+    }
+    await $.tool.call({ tool: 'Bash', command: 'a' }).catch(() => {})
+    await settle(clock)
+    expect((await $.command.run(PROGRESS)).text).toBe('NOW  idle')
+  })
+
+  test('a subagent call is not a main-loop run, and its turn ending leaves the main loop run alone', async ($, on) => {
+    const { world, clock } = await boot($, on, w => (w.now = T0))
+    const gate = hold(world)
+    const sub = $.tool.call({ tool: 'Read', file_path: '/x', agentId: 'a1' })
+    await settle(clock)
+    expect((await $.command.run(PROGRESS)).text).toBe('NOW  idle')
+    gate.release()
+    await sub
+    const gate2 = hold(world)
+    const main = $.tool.call({ tool: 'Agent', prompt: 'p' })
+    await settle(clock)
+    await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer', agentId: 'a1' })
+    await settle(clock)
+    expect((await $.command.run(PROGRESS)).text).toBe('NOW  Agent 0s')
+    gate2.release()
+    await main
   })
 
   test('the turn ending clears a call whose end was never seen', async ($, on) => {

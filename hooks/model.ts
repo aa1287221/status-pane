@@ -602,11 +602,14 @@ export type Progress = { running: { tool: string; sec: number }[]; more: number 
 
 const TOOL_NAME_MAX = 80
 
+/** Tells apart same-tool calls that carry no tool_use_id. */
+let anonSeq = 0
+
 /** The run a main-loop call starts; a subagent's tool is not what the session is doing now. */
 export const runOf = (e: { tool: string; tool_use_id?: string; agentId?: string }, now: number): ToolRun | null =>
   e.agentId !== undefined || typeof e.tool !== 'string' || e.tool === ''
     ? null
-    : { id: e.tool_use_id ?? `${e.tool}@${now}`, tool: e.tool.slice(0, TOOL_NAME_MAX), startedAt: now }
+    : { id: e.tool_use_id ?? `${e.tool}@${now}#${anonSeq++}`, tool: e.tool.slice(0, TOOL_NAME_MAX), startedAt: now }
 
 /** The calls of `sid` plus this one; a record of another session is dropped, not carried over. */
 export const addRun = (s: NowState | null, sid: string, run: ToolRun): NowState => {

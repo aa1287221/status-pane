@@ -103,6 +103,12 @@ like the other counters, and `session.start` and the main loop's `turn.complete`
 (the net for an end that was never seen). The bookkeeping keeps counting under the master switch,
 like the pending lines; the card is then not drawn.
 
+The elapsed time runs from the start of `next(e)`, which includes the permission prompt (engine doc),
+so a call waiting on approval counts as running: it is what the session is waiting on. A call with
+no `tool_use_id` gets `<tool>@<ms>#<n>` so two of the same tool in one millisecond stay apart. The
+kit's `$.tool.call` does carry `agentId`, so the subagent filter and the subagent `turn.complete`
+guard are covered end to end (row 57).
+
 **One view, two renderers.** `progressOf(tools, sid, nowMs)` returns `Res<{ running, more }>`: the
 calls oldest first (three at most, the rest counted in `more`) with the elapsed time at the draw
 clock (never negative). The card (`progressCard`) and `/progress` (`progressText`) both read it, so
@@ -641,13 +647,13 @@ Card     Box width round gray paddingX=1 column               (Section: Box widt
 | 49 | reader never throws | refused or throwing `exists`/read, a non-bytes answer, a path or clock that is not valid, empty/blank/BOM, trailing content, NaN, a non-object, 60k-deep nesting, 64 KiB exactly vs one byte more (bytes, not characters), every kind of broken UTF-8, `__proto__` keys; a name outside the grammar or an unregistered kind is not opened |
 | 50 | locations and names | the grammar both ways, `local` and `synced` paths with the TMPDIR / CLAUDE_CONFIG_DIR fallbacks, a name part that would not parse back gives null, the host of a synced name equals `producer.host` |
 | 51 | FIXTURE card at the three layouts | bodyColumns 36 / 49 / 89 (1, 2, 3 across): a card across the whole width, `count`, `age`, `observed`, on every surface; every manifest case is the contract text with no count, age or clock rows and no overflow; a long reason is read to its end; the age follows the draw clock; off by default and switched off by the rows file: no card and the file is never read; a refused read is corrupt and the rest draws; TMPDIR honoured; one error when it fails, none when healthy; the master switch collects nothing |
-| 52 | tool bookkeeping | `runOf`: a main-loop call becomes a run, a subagent's (`agentId`), a nameless one and a missing id are handled, a name is cut at 80; `addRun` / `dropRun`: parallel calls side by side, an end seen twice or never changes nothing, another session id starts over and an end under it leaves the record alone, at most 16 kept |
+| 52 | tool bookkeeping | `runOf`: a main-loop call becomes a run, a subagent's (`agentId`), a nameless one and a missing id are handled (two id-less calls of one tool in one millisecond do not collide), a name is cut at 80; `addRun` / `dropRun`: parallel calls side by side, an end seen twice or never changes nothing, another session id starts over and an end under it leaves the record alone, at most 16 kept |
 | 53 | elapsed text | `0s`, `59s`, `1m00s`, `59m59s`, `1h00m`; negative and NaN read `0s` |
 | 54 | the progress view | oldest first, elapsed at the draw clock, a clock behind the start reads 0s; more than three: three and a count; nothing running is `idle`, not n/a; each missing source (record, session id, never recorded, **another session's record**) is n/a with its own reason; mutation: removing the other-session check turns `progress: the view > records of another session are n/a, never shown as running` red (the view returns `running` for the other session's call) |
 | 55 | PROGRESS card at the three layouts | bodyColumns 36 / 49 / 89: a band of its own after the header across the whole width; `NOW`, tool and elapsed; idle; every n/a keeps its frame and is read in full; four or five calls: three rows and `+N more`; a long name loses its head, the elapsed time stays; nothing overflows; no card without `view.progress` or with the `progress` row off |
 | 56 | `/progress` is the card's view | the text's rows equal the card's rows at the three widths (running, parallel, idle); where the card is not drawn the text says why |
-| 57 | through the engine | `/progress` registered with `immediate: true` (the other command without); a fresh session reads idle on every surface; a held `tool.call` shows with its elapsed time at 36 / 49 / 89 and goes when it ends; the same view answers `/progress` mid-call with no `usage()` call; overlapping calls end in either order; a denied call still ends; `turn.complete` clears an unseen end; the 2 s repaint runs while a call is in flight and stops with it; before the first refresh `/progress` says `等待第一次更新` |
-| 58 | #26 follow-ups | `data.count` as `3.0` / `3e0` / `30e-1` is malformed with its own text and never shown, plain integers still read, an old file with a bad count is stale, a decoy `count` elsewhere does not stand in; an opt-in row turns on only for boolean true (`1`, `"yes"`, `"true"`, `[1]` leave it off) while a default-on row keeps the loose reading; U+061C in a reason is not drawn |
+| 57 | through the engine | `/progress` registered with `immediate: true` (the other command without); a fresh session reads idle on every surface; a held `tool.call` shows with its elapsed time at 36 / 49 / 89 and goes when it ends; the same view answers `/progress` mid-call with no `usage()` call; overlapping calls end in either order; a denied call and a throwing `next(e)` still end; `turn.complete` clears an unseen end; a subagent's `tool.call` is not a run and a subagent's `turn.complete` leaves the main loop's run alone; mutations: `noteEnd` outside the `finally`, the `agentId` guard on `turn.complete` and the `agentId` filter in `runOf` each turn a named test red; the 2 s repaint runs while a call is in flight and stops with it; before the first refresh `/progress` says `等待第一次更新` |
+| 58 | #26 follow-ups | `data.count` as `3.0` / `3e0` / `30e-1` is malformed with its own text and never shown (a string or other non-number count is now malformed at the reader, text `不是 JSON 整數字面量`, instead of the card's `不是整數`; SCHEMA §9), plain integers still read, an old file with a bad count is stale, a decoy `count` elsewhere does not stand in; an opt-in row turns on only for boolean true (`1`, `"yes"`, `"true"`, `[1]` leave it off) while a default-on row keeps the loose reading; U+061C in a reason is not drawn |
 
 ## Acceptance
 
@@ -656,11 +662,13 @@ Card     Box width round gray paddingX=1 column               (Section: Box widt
   path matrix has a test.
 - Type-check passes (scratch `tsconfig.json` outside the plugin folder per the skill, or
   `tsc -p` once the engine has laid `.claude-plugin/types/`).
-- Manual TUI check (main session, needs a real turn: `-p` cannot tell): start a turn that runs a long tool
-  (`Bash` `sleep 60`), type `/progress` **while it runs**. Expect the answer at once (not after the turn),
-  `NOW  Bash <n>s`, the same tool and time as the PROGRESS card, and no model call (cost and the
-  transcript unchanged). If it only appears after the turn, register it as a plain command and record the
-  limit on #15.
+- Manual TUI check (main session; `-p` cannot tell mid-turn behaviour):
+  1. `git -C ~/.claude/plugins/status-pane fetch origin && git -C ~/.claude/plugins/status-pane checkout t15-now-row-progress`, then start a new TUI session (hot reload may also pick it up).
+  2. Run `/cost` and note it.
+  3. Prompt `run Bash: sleep 60` and approve it.
+  4. While it runs, type `/progress`. PASS: `NOW  Bash <n>s` appears at once and matches the PROGRESS card. FAIL: the answer arrives only after the turn and reads `NOW  idle`; then register it as a plain command and record the limit on #15.
+  5. `/cost` again: unchanged apart from that turn's own cost (no model call for `/progress`). Watch the pane for flicker at the 2 s repaint; this also measures the extra `$` calls and state writes per tool call once.
+  6. `git -C ~/.claude/plugins/status-pane checkout main`.
 - Live probe (main session): loaded through `CLAUDE_CODE_PLUGIN_DIRS`, with the real
   `statusline.js` beside it, the context %, 5h %, 7d % and session cost agree (tokens, duration
   and lines drift while both write the cum file: see above); pane and tail draw at 200 columns,
