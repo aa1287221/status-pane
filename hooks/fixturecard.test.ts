@@ -212,7 +212,7 @@ describe('the fixture card: side file to card through the engine', () => {
   })
 
   test('bidi controls in a reason are not drawn', () => {
-    const bidi = [0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069, 0x200e, 0x200f].map(c => String.fromCodePoint(c)).join('')
+    const bidi = [0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069, 0x200e, 0x200f, 0x061c].map(c => String.fromCodePoint(c)).join('')
     const text = `n/a（收集失敗：a${bidi}b）`
     const raw = JSON.stringify(cardsAt(naSnap(text), 89))
     expect(raw).toContain('ab')

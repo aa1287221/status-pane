@@ -831,6 +831,37 @@ describe('side file reader: the fixture card data', () => {
   })
 })
 
+describe('side file reader: data.count is an integer literal', () => {
+  const withLiteral = (literal: string) => {
+    const text = FILES['fixture.valid.json']!.replace('"count": 3', `"count": ${literal}`)
+    expect(text === FILES['fixture.valid.json']).toBe(literal === '3')
+    return readSideFile(memIo({ [at('fixture.json')]: text }).io, at('fixture.json'), NOW)
+  }
+  test('a literal JSON.parse reads as the integer 3 but that is not one is malformed, and its count is never shown', async () => {
+    for (const literal of ['3.0', '3e0', '3E0', '30e-1', '3.00', '0.0']) {
+      const r = await withLiteral(literal)
+      expect([literal, r.verdict]).toEqual([literal, 'malformed'])
+      if (r.verdict !== 'ok') expect(r.text).toBe('n/a（格式錯誤：data.count 不是 JSON 整數字面量）')
+      expect(fixtureOf(r).ok).toBe(false)
+    }
+  })
+  test('boundary: plain integer literals are still read', async () => {
+    for (const [literal, n] of [['3', 3], ['0', 0], ['-7', -7], ['12345', 12345]] as const) {
+      expect(fixtureOf(await withLiteral(literal))).toMatchObject({ ok: true, v: { count: n } })
+    }
+  })
+  test('the check comes after staleness: an old file with a bad count is stale, not malformed', async () => {
+    const text = FILES['fixture.valid.json']!.replace('"count": 3', '"count": 3.0')
+    const r = await readSideFile(memIo({ [at('fixture.json')]: text }).io, at('fixture.json'), NOW + 4 * 3600_000)
+    expect(r.verdict).toBe('stale')
+  })
+  test('a decoy count in another member does not stand in for data.count', async () => {
+    const text = FILES['fixture.valid.json']!.replace('"count": 3', '"count": 3.0').replace('"data": {', '"decoy": {"count": 3}, "data": {')
+    const r = await readSideFile(memIo({ [at('fixture.json')]: text }).io, at('fixture.json'), NOW)
+    expect(r.verdict).toBe('malformed')
+  })
+})
+
 describe('side file reader: size before bytes, and reasons in the contract form', () => {
   const fsOf = (size: number, calls: string[]) => ({
     stat: async (p: string) => (calls.push(`stat ${p}`), { size }),

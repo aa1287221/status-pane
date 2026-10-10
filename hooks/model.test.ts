@@ -414,7 +414,11 @@ describe('#8 row toggles file', () => {
 
   test('fixture is the one row that is off until the file turns it on', () => {
     for (const text of [null, '', '{}', REAL_ROWS, '{"fixture":false}', '{"fixture":0}', '{"fixture":""}']) expect(parseToggles(text).rows.fixture).toBe(false)
-    for (const text of ['{"fixture":true}', '{"fixture":1}', '{"fixture":"yes"}']) expect(parseToggles(text).rows.fixture).toBe(true)
+    expect(parseToggles('{"fixture":true}').rows.fixture).toBe(true)
+    // an opt-in row turns on only for the boolean true; any other truthy value leaves it off
+    for (const text of ['{"fixture":1}', '{"fixture":"yes"}', '{"fixture":"true"}', '{"fixture":[1]}']) expect(parseToggles(text).rows.fixture).toBe(false)
+    // a row that is on by default keeps the loose reading: only a falsy value switches it off
+    expect(parseToggles('{"cost":1}').rows.cost).toBe(true)
   })
 
   test('a missing or unreadable file means everything on', () => {

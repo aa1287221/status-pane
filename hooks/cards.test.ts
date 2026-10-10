@@ -30,17 +30,17 @@ const BREAKPOINTS = [
   {
     columns: 36,
     name: 'narrow',
-    cards: [['', 34], ['CONTEXT', 34], ['5H', 34], ['7D', 34], ['COST', 34], ['GIT', 34], ['ACTIVITY', 34], ['SYSTEM', 34]],
+    cards: [['', 34], ['PROGRESS', 34], ['CONTEXT', 34], ['5H', 34], ['7D', 34], ['COST', 34], ['GIT', 34], ['ACTIVITY', 34], ['SYSTEM', 34]],
   },
   {
     columns: 49,
     name: 'medium',
-    cards: [['', 47], ['CONTEXT', 47], ['5H', 23], ['7D', 23], ['COST', 24], ['GIT', 22], ['ACTIVITY', 47], ['SYSTEM', 47]],
+    cards: [['', 47], ['PROGRESS', 47], ['CONTEXT', 47], ['5H', 23], ['7D', 23], ['COST', 24], ['GIT', 22], ['ACTIVITY', 47], ['SYSTEM', 47]],
   },
   {
     columns: 89,
     name: 'wide',
-    cards: [['', 87], ['CONTEXT', 29], ['5H', 28], ['7D', 28], ['COST', 29], ['GIT', 28], ['ACTIVITY', 28], ['SYSTEM', 87]],
+    cards: [['', 87], ['PROGRESS', 87], ['CONTEXT', 29], ['5H', 28], ['7D', 28], ['COST', 29], ['GIT', 28], ['ACTIVITY', 28], ['SYSTEM', 87]],
   },
 ] as const
 
@@ -64,12 +64,12 @@ describe('the kit mounts the pane on every surface at the three breakpoints', ()
     for (const surface of SURFACES) {
       const ui = await mountPane($, 89, surface)
       const boxes = (await ui.findAll({ type: 'Box' })).filter(b => b.props.borderStyle !== undefined)
-      expect(boxes.map(b => b.props)).toHaveLength(8)
+      expect(boxes.map(b => b.props)).toHaveLength(9)
       for (const props of boxes.map(b => b.props)) {
         expect(props).toMatchObject({ borderStyle: 'round', borderColor: 'gray', paddingX: 1, flexDirection: 'column' })
       }
       const titles = (await ui.findAll({ type: 'Box' })).filter(b => b.props.justifyContent === 'space-between')
-      expect(titles.length).toBeGreaterThanOrEqual(8)
+      expect(titles.length).toBeGreaterThanOrEqual(9)
       await ui.unmount()
     }
   })
@@ -89,7 +89,8 @@ describe('cards come and go with the toggles, at every breakpoint', () => {
     ['{"agents":false}', []],
     ['{"sys":false}', []],
     ['{"sys":false,"memory_mcp":false}', ['SYSTEM']],
-    ['{"usage":false,"quota":false,"cost":false,"dir":false,"repo":false,"agents":false,"edited":false,"sys":false,"memory_mcp":false}', ALL],
+    ['{"progress":false}', ['PROGRESS']],
+    ['{"usage":false,"quota":false,"cost":false,"dir":false,"repo":false,"agents":false,"edited":false,"sys":false,"memory_mcp":false,"progress":false}', ['PROGRESS', ...ALL]],
   ]
   for (const [rows, gone, renamed = {}] of CASES) {
     test(`${rows}`, async ($, on) => {

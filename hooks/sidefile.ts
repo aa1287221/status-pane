@@ -43,11 +43,12 @@ export type SideNa = {
 
 export type SideResult = SideOk | SideNa
 
-export type KindSpec = { cls: 'local' | 'synced'; ttlSec: number | null; finalTtlSec: number | null }
+/** `intFields` are `data` members whose raw literal must be a JSON integer (JSON.parse reads `3.0` and `3e0` as 3). */
+export type KindSpec = { cls: 'local' | 'synced'; ttlSec: number | null; finalTtlSec: number | null; intFields?: readonly string[] }
 
 /** Section 9. A null TTL never expires; a null final TTL means `data.final` is ignored. */
 export const KINDS: Record<string, KindSpec> = {
-  fixture: { cls: 'local', ttlSec: 600, finalTtlSec: null },
+  fixture: { cls: 'local', ttlSec: 600, finalTtlSec: null, intFields: ['count'] },
   'sync-status': { cls: 'local', ttlSec: 900, finalTtlSec: null },
   'site-watch': { cls: 'local', ttlSec: 300, finalTtlSec: null },
   'review-lane': { cls: 'local', ttlSec: 300, finalTtlSec: 86_400 },
@@ -57,6 +58,8 @@ export const KINDS: Record<string, KindSpec> = {
 export const SIDE_MAX_BYTES = 64 * 1024
 export const SKEW_SEC = 300
 const SUPPORTED_VERSIONS = [1]
+
+const INT_RE = /^-?(0|[1-9][0-9]*)$/
 
 const has = (o: object, key: string): boolean => Object.prototype.hasOwnProperty.call(o, key)
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -342,7 +345,7 @@ const judge = (bytes: Uint8Array, nameKind: string, parts: string[], nowMs: numb
   // 3: the literal of schema_version, which JSON.parse cannot tell from 1.0
   if (!has(parsed, 'schema_version')) return bad('schema_version 缺少')
   const literal = topLevelRaw(text, 'schema_version')
-  if (literal === null || !/^-?(0|[1-9][0-9]*)$/.test(literal)) return bad('schema_version 不是 JSON 整數字面量')
+  if (literal === null || !INT_RE.test(literal)) return bad('schema_version 不是 JSON 整數字面量')
   const version = Number(literal)
   if (parsed.schema_version !== version) return bad('schema_version 無法判定')
   if (version < 1 || Object.is(version, -0)) return bad('schema_version 小於 1')
@@ -365,6 +368,12 @@ const judge = (bytes: Uint8Array, nameKind: string, parts: string[], nowMs: numb
   if (f.status === 'failed') {
     const since = f.last === null ? '從未成功' : `上次成功 ${ageText(nowMs / 1000 - f.last)}前`
     return na('failed', `收集失敗：${f.message}，${since}`, base)
+  }
+  const dataRaw = data !== null && spec.intFields ? topLevelRaw(text, 'data') : null
+  for (const field of spec.intFields ?? []) {
+    const literal = dataRaw === null ? null : topLevelRaw(dataRaw, field)
+    // a missing member is the card's to report; this is only about a literal that JSON.parse would let through
+    if (literal !== null && !INT_RE.test(literal)) return bad(`data.${field} 不是 JSON 整數字面量`)
   }
   return {
     verdict: 'ok',
