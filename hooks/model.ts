@@ -1,6 +1,6 @@
 // Pure functions behind status-pane: no $ calls, so every path runs offline.
 
-import type { AgentGroup, CpuSample, HookVerdicts, McpInfo, MemInfo, NowState, Res, RowKey, Snap, Toggles, ToolRun } from './state'
+import type { AgentGroup, BgItem, BgKind, BgStart, InflightState, CpuSample, HookVerdicts, McpInfo, MemInfo, NowState, Res, RowKey, Snap, Toggles, ToolRun } from './state'
 
 /** The first line of a failure, less the `<plugin>: $.fs.read: ` the engine puts in front of a refused call. */
 export const why = (err: unknown): string => {
@@ -641,14 +641,122 @@ export const progressOf = (tools: Res<NowState | null>, sid: Res<string>, nowMs:
 }
 
 /** The lines of `/progress`: where the card is not drawn it says why, else the rows of the card as plain text. */
-export const progressText = (snap: Snap | null, tools: Res<NowState | null>, sid: Res<string>, nowMs: number): string => {
+export const progressText = (snap: Snap | null, tools: Res<NowState | null>, sid: Res<string>, nowMs: number, flight?: Res<InflightState | null>): string => {
   if (!snap) return 'progress n/a（等待第一次更新）'
   if (!snap.toggles.enabled) return 'progress n/a（status-pane 已停用）'
   if (!snap.toggles.rows.progress) return 'progress n/a（progress 列已在 rows 檔關閉）'
   const p = progressOf(tools, sid, nowMs)
-  if (!p.ok) return `NOW  n/a（${p.why}）`
-  if (p.v.running.length === 0) return 'NOW  idle'
-  const rows = p.v.running.map(r => `${r.tool} ${fmtElapsed(r.sec)}`)
-  if (p.v.more > 0) rows.push(`+${p.v.more} more`)
-  return rows.map((r, i) => `${i === 0 ? 'NOW ' : '    '} ${r}`).join('\n')
+  let now: string[]
+  if (!p.ok) now = [`NOW  n/a（${p.why}）`]
+  else if (p.v.running.length === 0) now = ['NOW  idle']
+  else {
+    const rows = p.v.running.map(r => `${r.tool} ${fmtElapsed(r.sec)}`)
+    if (p.v.more > 0) rows.push(`+${p.v.more} more`)
+    now = rows.map((r, i) => `${i === 0 ? 'NOW ' : '    '} ${r}`)
+  }
+  return [...now, ...(flight ? inflightLines(flight, sid, nowMs) : [])].join('\n')
+}
+
+// ---- in-flight: background work from the Stop snapshot, dated by the plugin's own bookkeeping ----
+
+export const BG_MAX_STARTS = 16
+export const INFLIGHT_SHOWN = 3
+const BG_LABEL_MAX = 48
+const NO_SNAPSHOT = '還沒有回合結束的快照'
+
+export type Inflight = { items: { label: string; sec: number; exact: boolean }[]; more: number; ageSec: number }
+
+/** The background call a main-loop or subagent tool call starts, or null. */
+export const startOf = (e: { tool: string; run_in_background?: unknown }, now: number): BgStart | null => {
+  if (e.tool === 'Bash' && e.run_in_background === true) return { kind: 'shell', at: now }
+  if (e.tool === 'Agent' && e.run_in_background === true) return { kind: 'subagent', at: now }
+  if (e.tool === 'CronCreate' || e.tool === 'ScheduleWakeup') return { kind: 'cron', at: now }
+  return null
+}
+
+const sameSid = (s: InflightState | null, sid: string): InflightState | null => (s && s.sid === sid ? s : null)
+
+export const addStart = (s: InflightState | null, sid: string, start: BgStart): InflightState => {
+  const cur = sameSid(s, sid)
+  return { sid, seenAt: cur?.seenAt ?? null, items: cur?.items ?? [], starts: [...(cur?.starts ?? []), start].slice(-BG_MAX_STARTS) }
+}
+
+/** An engine string as one printable line: controls and bidi marks go, the length is bounded. */
+const tidy = (v: unknown): string =>
+  typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, '').trim() : ''
+
+const kindOf = (type: string): BgKind => (type === 'shell' || type === 'subagent' || type === 'monitor' || type === 'workflow' ? type : 'other')
+
+/** Names the task from the fields the engine gives per type, never from its command line or prompt. */
+const labelOf = (t: Record<string, unknown>): { kind: BgKind; label: string } => {
+  const type = tidy(t.type)
+  const kind = kindOf(type)
+  const detail = kind === 'subagent' ? tidy(t.agent_type) : kind === 'workflow' ? tidy(t.name) : kind === 'monitor' ? [tidy(t.server), tidy(t.tool)].filter(Boolean).join(':') : ''
+  const head = kind === 'subagent' ? 'agent' : kind === 'other' ? type || 'task' : kind
+  return { kind, label: (detail ? `${head} ${detail}` : head).slice(0, BG_LABEL_MAX) }
+}
+
+type StopInput = { background_tasks?: unknown; session_crons?: unknown }
+
+/** The state after a main-loop Stop: the snapshot's items, dated by a start when exactly one of its kind fits. */
+export const noteStop = (s: InflightState | null, sid: string, e: StopInput, now: number): InflightState | null => {
+  const hasTasks = Array.isArray(e.background_tasks)
+  const hasCrons = Array.isArray(e.session_crons)
+  if (!hasTasks && !hasCrons) return s
+  const cur = sameSid(s, sid)
+  const known = new Map((cur?.items ?? []).map(i => [i.id, i]))
+  const incoming: { id: string; kind: BgKind; label: string }[] = []
+  if (hasTasks) {
+    for (const t of e.background_tasks as Record<string, unknown>[]) {
+      if (t && typeof t === 'object' && typeof t.id === 'string') incoming.push({ id: t.id, ...labelOf(t) })
+    }
+  }
+  if (hasCrons) {
+    for (const c of e.session_crons as Record<string, unknown>[]) {
+      if (c && typeof c === 'object' && typeof c.id === 'string') incoming.push({ id: c.id, kind: 'cron', label: c.recurring === false ? 'wakeup' : 'cron' })
+    }
+  }
+  const fresh = incoming.filter(i => !known.has(i.id))
+  const startKind = (k: BgKind) => (k === 'cron' ? 'cron' : k === 'shell' ? 'shell' : k === 'subagent' ? 'subagent' : null)
+  const items: BgItem[] = incoming.map(i => {
+    const old = known.get(i.id)
+    if (old) return old
+    const k = startKind(i.kind)
+    const starts = (cur?.starts ?? []).filter(st => st.kind === k)
+    const rivals = fresh.filter(f => startKind(f.kind) === k)
+    return starts.length === 1 && rivals.length === 1 ? { ...i, since: starts[0].at, exact: true } : { ...i, since: now, exact: false }
+  })
+  // a field the engine left out is not an empty list: that class keeps what it had
+  for (const old of cur?.items ?? []) {
+    if (old.kind === 'cron' ? !hasCrons : !hasTasks) items.push(old)
+  }
+  return { sid, seenAt: now, items, starts: [] }
+}
+
+/** A task's notification ended it; an id we do not hold, or another session, leaves the record as it is. */
+export const endTask = (s: InflightState | null, sid: string, id: string): InflightState | null =>
+  s && s.sid === sid && s.items.some(i => i.id === id) ? { ...s, items: s.items.filter(i => i.id !== id) } : s
+
+/** What BG shows at `nowMs`, oldest first, or why that is unknown. Card and /progress both read this. */
+export const inflightOf = (flight: Res<InflightState | null>, sid: Res<string>, nowMs: number): Res<Inflight> => {
+  if (!flight.ok) return { ok: false, why: flight.why }
+  if (!sid.ok) return { ok: false, why: sid.why }
+  if (flight.v === null || flight.v.seenAt === null) return { ok: false, why: NO_SNAPSHOT }
+  if (flight.v.sid !== sid.v) return { ok: false, why: '紀錄屬於另一個 session' }
+  const all = [...flight.v.items].sort((a, b) => a.since - b.since)
+  const items = all.slice(0, INFLIGHT_SHOWN).map(i => ({ label: i.label, sec: Math.max(0, Math.floor((nowMs - i.since) / 1000)), exact: i.exact }))
+  return { ok: true, v: { items, more: all.length - items.length, ageSec: Math.max(0, Math.floor((nowMs - flight.v.seenAt) / 1000)) } }
+}
+
+/** The permission dialog is not a background item and no hook gave its wait (#9): this row is always n/a. */
+export const PERM_NA = 'n/a（權限對話框不在引擎的背景清單，沒有等待時間來源）'
+
+/** The rows of BG as text lines (after NOW), the same words the card draws. */
+export const inflightLines = (flight: Res<InflightState | null>, sid: Res<string>, nowMs: number): string[] => {
+  const v = inflightOf(flight, sid, nowMs)
+  if (!v.ok) return [`BG   n/a（${v.why}）`, `PERM ${PERM_NA}`]
+  const rows = v.v.items.map(i => `${i.exact ? '' : '≥'}${i.label} ${fmtElapsed(i.sec)}`)
+  if (v.v.more > 0) rows.push(`+${v.v.more} more`)
+  const lines = rows.length === 0 ? ['BG   none'] : rows.map((r, i) => `${i === 0 ? 'BG  ' : '    '} ${r}`)
+  return [...lines, `     snapshot ${fmtElapsed(v.v.ageSec)} ago`, `PERM ${PERM_NA}`]
 }

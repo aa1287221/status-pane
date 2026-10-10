@@ -3,10 +3,10 @@ import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import { MCP_EVERY_MS, refresh } from './collect'
 import type { Io } from './collect'
-import { addRun, cannotDraw, DEAD_MS, dropRun, effortFrom, mergeTail, patchLineCount, progressText, runOf, sidOf, STALE_MS, tailText, why } from './model'
+import { addRun, addStart, endTask, noteStop, startOf, cannotDraw, DEAD_MS, dropRun, effortFrom, mergeTail, patchLineCount, progressText, runOf, sidOf, STALE_MS, tailText, why } from './model'
 import { HIST_MAX, layoutTree, paneLayout } from './pane'
 import { readBytesCapped } from './sidefile'
-import type { NowState, Res } from './state'
+import type { InflightState, NowState, Res } from './state'
 
 const PANE = 'status-pane'
 const TICK_MS = 30_000
@@ -29,6 +29,7 @@ const cpuA = atom({ plugin: 'status-pane', key: 'cpu' } as const, null)
 const histA = atom({ plugin: 'status-pane', key: 'cpuHist' } as const, [] as number[])
 const checkedA = atom({ plugin: 'status-pane', key: 'checkedAt' } as const, 0)
 const nowA = atom({ plugin: 'status-pane', key: 'now' } as const, null)
+const inflightA = atom({ plugin: 'status-pane', key: 'inflight' } as const, null)
 
 /** What one load of the module keeps in memory; everything drawn lives in $.state. */
 type Run = {
@@ -37,6 +38,8 @@ type Run = {
   repaint: Timer[]
   /** The repaint that moves the elapsed time; set only while a call is in flight. */
   nowTick: Timer | null
+  /** Background task ids whose notification row was drawn since the last Stop; a render hook may not write $.state, so BG hides these from memory. */
+  ended: Set<string>
   running: Promise<void> | null
   /** Counts refreshes: only the one that holds the latest number may write or free `running`. */
   epoch: number
@@ -245,17 +248,49 @@ const noteIdle = async ($: EngineInterface, run: Run): Promise<void> => {
   }
 }
 
-/** What the NOW card and /progress are drawn from; each source that cannot be read is its own n/a. */
-const progressSources = async ($: EngineInterface): Promise<{ tools: Res<NowState | null>; sid: Res<string> }> => {
+/** What the NOW card, BG and /progress are drawn from; each source that cannot be read is its own n/a. */
+const progressSources = async (
+  $: EngineInterface,
+  run: Run,
+): Promise<{ tools: Res<NowState | null>; sid: Res<string>; inflight: Res<InflightState | null> }> => {
   const tools: Res<NowState | null> = await read($, nowA).then(
     v => ({ ok: true as const, v }),
     (err: unknown) => ({ ok: false as const, why: `工具紀錄讀不到：${why(err)}` }),
+  )
+  const inflight: Res<InflightState | null> = await read($, inflightA).then(
+    v => ({ ok: true as const, v: [...run.ended].reduce((cur, id) => (cur ? endTask(cur, cur.sid, id) : cur), v) }),
+    (err: unknown) => ({ ok: false as const, why: `背景工作紀錄讀不到：${why(err)}` }),
   )
   const sid: Res<string> = await $.session.id().then(
     id => ({ ok: true as const, v: sidOf(id) }),
     (err: unknown) => ({ ok: false as const, why: `session id 讀不到：${why(err)}` }),
   )
-  return { tools, sid }
+  return { tools, sid, inflight }
+}
+
+/** Dates a background call, so the Stop snapshot that lists it can say how long it has waited. Never throws. */
+const noteBgStart = async ($: EngineInterface, e: { tool: string; run_in_background?: unknown }): Promise<void> => {
+  try {
+    const start = startOf(e, await $.clock.now())
+    if (!start) return
+    const sid = sidOf(await $.session.id())
+    await update($, inflightA, s => addStart(s, sid, start))
+  } catch {
+    // the wait is then counted from the Stop that lists it
+  }
+}
+
+/** Keeps the Stop snapshot of the session's own loop; a subagent's Stop is not the session's list. Never throws. */
+const noteBgStop = async ($: EngineInterface, run: Run, e: { agent_id?: string; background_tasks?: unknown; session_crons?: unknown }): Promise<void> => {
+  if (e.agent_id !== undefined) return
+  try {
+    run.ended.clear()
+    const now = await $.clock.now()
+    const sid = sidOf(await $.session.id())
+    await update($, inflightA, s => noteStop(s, sid, e, now))
+  } catch {
+    // BG keeps the snapshot it had
+  }
 }
 
 const noteEffort = async ($: EngineInterface, input: unknown): Promise<void> => {
@@ -275,6 +310,7 @@ export const register: Register = on => {
     followUp: null,
     repaint: [],
     nowTick: null,
+    ended: new Set(),
     running: null,
     epoch: 0,
     lastTickAt: Number.NEGATIVE_INFINITY,
@@ -311,8 +347,8 @@ export const register: Register = on => {
     try {
       const snap = await read($, snapA)
       const nowMs = await $.clock.now()
-      const { tools, sid } = await progressSources($)
-      return { text: progressText(snap, tools, sid, nowMs) }
+      const { tools, sid, inflight } = await progressSources($, run)
+      return { text: progressText(snap, tools, sid, nowMs, inflight) }
     } catch (err) {
       return { text: `progress n/a（${cannotDraw(err)}）` }
     }
@@ -324,11 +360,13 @@ export const register: Register = on => {
   })
   on('classic.Stop', async ($, e, next) => {
     await noteEffort($, e)
+    await noteBgStop($, run, e)
     return next(e)
   })
 
   on('tool.call', async ($, e, next) => {
     const called = await noteStart($, run, e)
+    await noteBgStart($, e)
     let ran
     try {
       ran = await next(e)
@@ -383,7 +421,7 @@ export const register: Register = on => {
       // the chart is optional: a history that cannot be read costs the chart, not the pane
       const cpuHist = await read($, histA).catch(() => [] as number[])
       const nowMs = await $.clock.now()
-      const progress = await progressSources($)
+      const progress = await progressSources($, run)
       // a Raster is drawn on the terminal only; every other surface gets the text gauge and sparkline
       const raster = e.surface === 'terminal'
       const layout = paneLayout(snap, { columns: e.props.bodyColumns, nowMs, raster, cpuHist, progress })
@@ -397,6 +435,13 @@ export const register: Register = on => {
       const { Text } = $.ui.resolve(e)
       return <Text dimColor>{`status-pane n/a (${cannotDraw(err)})`}</Text>
     }
+  })
+
+  // a task's notification row says it ended: BG hides it without waiting for the next Stop
+  on('ui.render', { component: 'UserMessage' }, (_$, e, next) => {
+    const id = e.props.origin?.kind === 'task-notification' ? e.props.task?.id : undefined
+    if (id && run.ended.size < 64) run.ended.add(id)
+    return next(e)
   })
 
   on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {

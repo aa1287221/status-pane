@@ -45,6 +45,18 @@ export type ToolRun = { id: string; tool: string; startedAt: number }
 /** The calls in flight for one session, kept by the plugin's own `tool.call` hook (never from a tracker file). */
 export type NowState = { sid: string; calls: ToolRun[] }
 
+/** What a background task or schedule is, from the engine's own `type`; `cron` is a `session_crons` entry. */
+export type BgKind = 'shell' | 'subagent' | 'monitor' | 'workflow' | 'other' | 'cron'
+
+/** A background task or schedule the last Stop snapshot listed. `since` is epoch ms; `exact` is false when it is only the Stop that first listed it. */
+export type BgItem = { id: string; kind: BgKind; label: string; since: number; exact: boolean }
+
+/** A background call this session made since the last Stop; the snapshot lists what survived, these only date it. */
+export type BgStart = { kind: 'shell' | 'subagent' | 'cron'; at: number }
+
+/** Background work for one session: the last Stop snapshot (`seenAt`, null until one arrives) and the starts since. */
+export type InflightState = { sid: string; seenAt: number | null; items: BgItem[]; starts: BgStart[] }
+
 export type CpuSample = { idle: number; total: number }
 
 export type MemInfo = { usedKb: number; totalKb: number; pct: number }
@@ -92,6 +104,8 @@ declare module 'claude-code' {
       cpuHist: number[]
       /** Main-loop tool calls in flight; null until a hook has written it since the plugin loaded. */
       now: NowState | null
+      /** Background tasks and schedules from the Stop snapshot; null until a hook has written it since the plugin loaded. */
+      inflight: InflightState | null
       /** When a refresh last failed to write its snapshot; writing it makes the pane read the clock again. */
       checkedAt: number
     }

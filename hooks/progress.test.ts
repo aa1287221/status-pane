@@ -198,6 +198,8 @@ describe('through the engine: tool.call bookkeeping, the pane and /progress', ()
     world.toolResult = () => gate.promise.then(() => ({ result: {} }))
     return gate
   }
+  // the NOW lines of the answer: BG and PERM follow them (inflight.test.ts)
+  const nowOf = (text: string | undefined): string => (text ?? '').split('\nBG')[0]!
   const settle = async (clock: { settle: () => Promise<void> }) => {
     await clock.settle()
   }
@@ -214,7 +216,7 @@ describe('through the engine: tool.call bookkeeping, the pane and /progress', ()
     for (const { columns } of WIDTHS) {
       for (const surface of SURFACES) {
         const card = cardOf(await paneView($, columns, surface), 'PROGRESS')
-        expect(card.body).toEqual([pair('NOW', 'idle', columns - 2 - 4)])
+        expect(card.body.slice(0, 1)).toEqual([pair('NOW', 'idle', columns - 2 - 4)])
       }
     }
   })
@@ -226,13 +228,13 @@ describe('through the engine: tool.call bookkeeping, the pane and /progress', ()
       const calling = $.tool.call({ tool: 'Bash', command: 'sleep 60' })
       await settle(clock)
       const inner = columns - 2 - 4
-      for (const surface of SURFACES) expect(cardOf(await paneView($, columns, surface), 'PROGRESS').body).toEqual([pair('NOW', 'Bash 0s', inner)])
+      for (const surface of SURFACES) expect(cardOf(await paneView($, columns, surface), 'PROGRESS').body.slice(0, 1)).toEqual([pair('NOW', 'Bash 0s', inner)])
       world.now = T0 + 75_000
-      expect(cardOf(await paneView($, columns), 'PROGRESS').body).toEqual([pair('NOW', 'Bash 1m15s', inner)])
+      expect(cardOf(await paneView($, columns), 'PROGRESS').body.slice(0, 1)).toEqual([pair('NOW', 'Bash 1m15s', inner)])
       gate.release()
       await calling
       await settle(clock)
-      expect(cardOf(await paneView($, columns), 'PROGRESS').body).toEqual([pair('NOW', 'idle', inner)])
+      expect(cardOf(await paneView($, columns), 'PROGRESS').body.slice(0, 1)).toEqual([pair('NOW', 'idle', inner)])
     })
 
     test(`${tier}: /progress answers from the same view as the card, mid-call, with no model call`, async ($, on) => {
@@ -246,9 +248,9 @@ describe('through the engine: tool.call bookkeeping, the pane and /progress', ()
       world.now = T0 + 20_000
       const usageBefore = world.usageCalls
       const ran = await $.command.run(PROGRESS)
-      expect(ran.text).toBe(['NOW  Bash 20s', '     Read 8s'].join('\n'))
-      const card = cardOf(await paneView($, columns), 'PROGRESS').body.map(l => l.replace(/^NOW/, '').replace(/\s+/g, ' ').trim())
-      expect(card).toEqual(ran.text!.split('\n').map(l => l.slice(5).replace(/\s+/g, ' ').trim()))
+      expect(nowOf(ran.text)).toBe(['NOW  Bash 20s', '     Read 8s'].join('\n'))
+      const card = cardOf(await paneView($, columns), 'PROGRESS').body.slice(0, 2).map(l => l.replace(/^NOW/, '').replace(/\s+/g, ' ').trim())
+      expect(card).toEqual(nowOf(ran.text).split('\n').map(l => l.slice(5).replace(/\s+/g, ' ').trim()))
       // answering costs no refresh and no usage() call
       expect(world.usageCalls).toBe(usageBefore)
       gate.release()
@@ -264,15 +266,15 @@ describe('through the engine: tool.call bookkeeping, the pane and /progress', ()
     const gateB = hold(world)
     const b = $.tool.call({ tool: 'Read', file_path: '/x' })
     await settle(clock)
-    expect((await $.command.run(PROGRESS)).text).toMatch(/^NOW {2}Bash 0s\n {5}Read 0s$/)
+    expect(nowOf((await $.command.run(PROGRESS)).text)).toMatch(/^NOW {2}Bash 0s\n {5}Read 0s$/)
     gateB.release()
     await b
     await settle(clock)
-    expect((await $.command.run(PROGRESS)).text).toBe('NOW  Bash 0s')
+    expect(nowOf((await $.command.run(PROGRESS)).text)).toBe('NOW  Bash 0s')
     gateA.release()
     await a
     await settle(clock)
-    expect((await $.command.run(PROGRESS)).text).toBe('NOW  idle')
+    expect(nowOf((await $.command.run(PROGRESS)).text)).toBe('NOW  idle')
   })
 
   test('a call that is denied still ends', async ($, on) => {
@@ -280,7 +282,7 @@ describe('through the engine: tool.call bookkeeping, the pane and /progress', ()
     world.toolResult = () => ({ deny: 'no' })
     await $.tool.call({ tool: 'Bash', command: 'a' })
     await settle(clock)
-    expect((await $.command.run(PROGRESS)).text).toBe('NOW  idle')
+    expect(nowOf((await $.command.run(PROGRESS)).text)).toBe('NOW  idle')
   })
 
   test('a call whose next() throws still ends', async ($, on) => {
@@ -290,7 +292,7 @@ describe('through the engine: tool.call bookkeeping, the pane and /progress', ()
     }
     await $.tool.call({ tool: 'Bash', command: 'a' }).catch(() => {})
     await settle(clock)
-    expect((await $.command.run(PROGRESS)).text).toBe('NOW  idle')
+    expect(nowOf((await $.command.run(PROGRESS)).text)).toBe('NOW  idle')
   })
 
   test('a subagent call is not a main-loop run, and its turn ending leaves the main loop run alone', async ($, on) => {
@@ -298,7 +300,7 @@ describe('through the engine: tool.call bookkeeping, the pane and /progress', ()
     const gate = hold(world)
     const sub = $.tool.call({ tool: 'Read', file_path: '/x', agentId: 'a1' })
     await settle(clock)
-    expect((await $.command.run(PROGRESS)).text).toBe('NOW  idle')
+    expect(nowOf((await $.command.run(PROGRESS)).text)).toBe('NOW  idle')
     gate.release()
     await sub
     const gate2 = hold(world)
@@ -306,7 +308,7 @@ describe('through the engine: tool.call bookkeeping, the pane and /progress', ()
     await settle(clock)
     await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer', agentId: 'a1' })
     await settle(clock)
-    expect((await $.command.run(PROGRESS)).text).toBe('NOW  Agent 0s')
+    expect(nowOf((await $.command.run(PROGRESS)).text)).toBe('NOW  Agent 0s')
     gate2.release()
     await main
   })
@@ -316,10 +318,10 @@ describe('through the engine: tool.call bookkeeping, the pane and /progress', ()
     hold(world)
     void $.tool.call({ tool: 'Bash', command: 'a' })
     await settle(clock)
-    expect((await $.command.run(PROGRESS)).text).toBe('NOW  Bash 0s')
+    expect(nowOf((await $.command.run(PROGRESS)).text)).toBe('NOW  Bash 0s')
     await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
     await settle(clock)
-    expect((await $.command.run(PROGRESS)).text).toBe('NOW  idle')
+    expect(nowOf((await $.command.run(PROGRESS)).text)).toBe('NOW  idle')
   })
 
   test('the elapsed time is repainted while a call runs, and the timer stops with it', async ($, on) => {
@@ -344,6 +346,6 @@ describe('through the engine: tool.call bookkeeping, the pane and /progress', ()
 
   test('/progress answers n/a before the first refresh and never throws', async ($, on) => {
     installWorld(on, makeWorld())
-    expect((await $.command.run(PROGRESS)).text).toBe('progress n/a（等待第一次更新）')
+    expect(nowOf((await $.command.run(PROGRESS)).text)).toBe('progress n/a（等待第一次更新）')
   })
 })
