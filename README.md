@@ -36,7 +36,7 @@ Claude Code 的 function-hooks mod，用來取代原生的 `statusLine`（cc-sta
 - session 開始時 pane 會自動打開：終端機至少 144 欄才會打開；手動開過一次、而且之後沒有手動關掉的話，降到 110 欄。
 - 手動打開或叫回來，輸入 `/status-pane`。
 - `~/.claude/cc-statusline-rows.json` 可以逐列關閉；設成 `"enabled": false` 會整個停用，什麼都不收集、不寫入。
-- 加上 `"fixture": true` 會多出一張 FIXTURE 卡，讀 `$TMPDIR/claude-side/fixture.json`（side file 契約的示範，預設關閉）；檔案缺少、過期或損毀時，卡片顯示 `n/a（原因）`。
+- 加上 `"fixture": true`（只認布林 true，`1`、`"yes"` 不算）會多出一張 FIXTURE 卡，讀 `$TMPDIR/claude-side/fixture.json`（side file 契約的示範，預設關閉）；檔案缺少、過期或損毀時，卡片顯示 `n/a（原因）`。
 
 ## 開發
 

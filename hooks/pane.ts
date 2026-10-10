@@ -324,7 +324,7 @@ const toneSeg = (text: string, pct: number): Seg => seg(text, { color: PALETTE[p
 const naLines = (text: string, max: number): Line[] => wrapWords(text, max).map(t => [dim(t)])
 
 /** Bidi controls a reason may carry (the side file contract lets them through); drawn, they would reorder the line. */
-const BIDI_RE = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g
+const BIDI_RE = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g
 
 /** A failure's rows, its reason read in full. */
 const naRows = (text: string, inner: number): CardRow[] => naLines(text.replace(BIDI_RE, ''), inner).map((line): CardRow => ({ kind: 'text', line }))

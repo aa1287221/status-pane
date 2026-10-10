@@ -230,7 +230,8 @@ export function parseTogglesStrict(text: string): Toggles | null {
   const from = asRecord(stored)
   if (!from) return null
   const rows = allOn()
-  for (const k of ROW_KEYS) if (k in from) rows[k] = !!from[k]
+  // an opt-in row turns on only for the boolean true, so a stray 1 or "yes" cannot switch on a row with no producer
+  for (const k of ROW_KEYS) if (k in from) rows[k] = OPT_IN.includes(k) ? from[k] === true : !!from[k]
   return { enabled: from.enabled !== false, rows }
 }
 
