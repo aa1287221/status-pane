@@ -207,13 +207,17 @@ export const ROW_KEYS: readonly RowKey[] = [
   'sys',
   'edited',
   'history',
+  'fixture',
 ]
 
 /** The rows file (L19-31): a missing key or file leaves the row on; `enabled:false` is the master switch. */
 export const parseToggles = (text: string | null): Toggles =>
   (text === null ? null : parseTogglesStrict(text)) ?? { enabled: true, rows: allOn() }
 
-const allOn = () => Object.fromEntries(ROW_KEYS.map(k => [k, true])) as Record<RowKey, boolean>
+/** Rows that stay off until the rows file says `true`: they have no producer on a normal machine. */
+const OPT_IN: readonly RowKey[] = ['fixture']
+
+const allOn = () => Object.fromEntries(ROW_KEYS.map(k => [k, !OPT_IN.includes(k)])) as Record<RowKey, boolean>
 
 /** Like parseToggles, but a text that is not a JSON object is null, so a bad read can keep the previous toggles. */
 export function parseTogglesStrict(text: string): Toggles | null {

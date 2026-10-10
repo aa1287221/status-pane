@@ -25,6 +25,8 @@ No `AbovePrompt` band: tw-stock-mod already answers that site without calling `n
   hooks/pane.ts                pure view: snapshot -> `Layout` (cards as plain data) -> engine elements
                                (`paneLayout`, `layoutTree`); gauge and chart Raster encoders; text fitting
   hooks/state.d.ts             $.state contract and the snapshot types (a hooks/-located contract is accepted)
+  hooks/sidefile.ts            pure reader of the side file contract (hub SCHEMA.md v1): bytes + clock in, a verdict out; `SideIo` is its seam
+  hooks/sidefile.fixtures.ts   test-only: embedded copies of the hub's hand-written fixtures (hub commit 6098494)
   hooks/fixture.ts             test-only fake machine; register.tsx never imports it
   hooks/tree.ts                test-only: reads a drawn tree back as text and cards (shares nothing with pane.ts)
   hooks/*.test.ts              `claude plugin test` suites
@@ -118,6 +120,32 @@ the errors like any n/a.
 - A settings read that fails (any of its reads) keeps the verdicts of the refresh before, which the
   snapshot carries (`hooks`), as R22 does for the toggles; with none yet every hook counts as wired.
   The refresher check is a plain existence test and has no such memory.
+
+## Side files (reader contract)
+
+Producers hand data over as small JSON side files, specified in the hub repo's `contracts/side-file/SCHEMA.md`
+(canonical there; this mod implements the reader and shares no code with the Python writer). `readSideFile(io, path,
+nowMs)` and `readSideKind(io, kind, loc, name, nowMs)` judge a file by the eight steps of its section 4 and return
+the data (`verdict: 'ok'`) or an n/a with the contract's text (`n/a（缺檔）`, `n/a（過期 4h）`, ...). They never throw: a
+refused `exists` or read, a wrong type from the seam, an invalid clock or a hostile document is a classified n/a.
+
+- Seam: `SideIo { exists, readBytes }`; `Io.readBytes` is `$.fs.stat` (a file over 64 KiB is refused unread) then
+  `$.fs.read(path, { as: 'bytes' })` decoded by a pure base64 decoder that refuses a text longer than 64 KiB can
+  encode. The `{ base64 }` shape is specified by the engine typings; it is not yet run on a live engine (the test
+  kit's fake in `fixture.ts` is our own, so it proves self-consistency only). Reasons that do not come from the
+  reader (a guard timeout, a failed dependency) are shown as `n/a（...）`, and bidi controls are not drawn. The reader checks the 64 KiB limit on bytes, strict UTF-8, the raw literal of the top-level
+  `schema_version` (`JSON.parse` cannot tell `1.0` from `1`), a real calendar for every stamp (no `Date.parse`:
+  it rolls `2026-02-30` over), code points for `error.message`, and the 300 s clock-ahead tolerance.
+- Verdicts beyond the contract's seven, decided before anything is opened: `bad_name` (file name outside the
+  grammar), `unknown_kind` (not in the registry, section 9) and `no_clock`.
+- Paths: `local` kinds under `$TMPDIR/claude-side/` (`/tmp` when unset or empty), `synced` under
+  `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/-project/references/side-files/`. Only `local` is read by the pane
+  today; there is no directory listing and no multi-host merge (section 7.1) yet.
+- **FIXTURE card** (the proof of the path, kind `fixture`, `$TMPDIR/claude-side/fixture.json`, TTL 600 s): off
+  unless the rows file has `"fixture": true` (the only opt-in row: no producer exists on a normal machine). A band
+  of its own, last, across the whole width at every tier. Title value and `count`, `age` (at the draw, so it keeps
+  counting between refreshes) and `observed` (local clock); any other verdict is the reader's text, wrapped and read
+  in full, with no data of the file. A failing fixture counts as one error like any row that is on.
 
 ## Files the mod writes (format contract)
 
@@ -569,6 +597,14 @@ Card     Box width round gray paddingX=1 column               (Section: Box widt
 | 41 | COST matrix | headers `session` (bold) and `total` on the title row with a dim hairline under it; the matrix from 22 cells inside for the usual figures, then `sess` / `tok` from 20, then stacked rows (`$ session`, `tok session`, `$ total`, `tok total`; one row only: `session`, `total`); a long figure (`1234.56`, `12.3M≈`) widens its column and walks the chain full, short, stacked as the card narrows, no number cut; in a COST/GIT band COST takes what its matrix needs from GIT down to 16 cells inside for GIT (w=47: 26 and 20; medium shows the matrix); the `$` row follows `cost`, the `tokens` row `usage`; the title is COST, or TOKENS with `cost` off; neither on: no card |
 | 42 | configured effort | no hook yet: the top-level `effortLevel` (dim), else the `modelSettings` key that is the longest prefix of the model id, else nothing; a hook's level beats it and takes its colour; a level found only in one source (the merge hides `modelSettings`) is found; a settings read that fails leaves it out; the model row alone makes the settings be read |
 | 43 | reset clock | 5H and 7D show the countdown and the clock it runs out at (`2h10m · 04:51`), the weekday on another date and always for 7D; the clock is `snap.at + resetSec` in the liveness's zone, wrapped countdowns included; midnight is the day boundary; the clock goes under the countdown, right-aligned, when the two do not fit beside the label with 2 cells; unknown has no clock |
+| 44 | side file reader, the hub fixtures | `sidefile.test.ts`: the thirteen cases and six boundaries of `MANIFEST.json` (embedded, hub commit 6098494) give their verdict; each negative fails for its own named reason, not another; a hidden `count` never appears in a non-ok result |
+| 45 | fixture drift | an embedded copy that no longer matches its manifest entry fails: byte length at the hub commit, `truncated` is the first 320 bytes of `valid`, each `hidden_count` is the `count` its copy holds, the C1 escape is still the visible six characters |
+| 46 | section 2 rules | every key required; label, kind, stamp, code, status shapes; consistency 1-3; `error.message` 1 to 200 code points and the control set (U+0000-001F, 007F-009F, 2028, 2029) with its neighbours accepted; unknown keys ignored; the first violation is the one named |
+| 47 | `schema_version` literal | `1.0`, `1e0`, `-0`, `0`, strings and bools are malformed, `2` is unsupported before any v1 rule; a decoy inside `data`, a duplicate key and an escaped key name are read as `JSON.parse` has them |
+| 48 | time | calendar, not `Date.parse` (leap and century years, month lengths, hour 24, year 0000 and 0001/9999); age equal to the TTL is fresh, a millisecond more is stale; 300 s ahead is age 0, 301 s is malformed; `data.final` only as boolean `true` and only for a kind with a final TTL; step 6 before step 7 |
+| 49 | reader never throws | refused or throwing `exists`/read, a non-bytes answer, a path or clock that is not valid, empty/blank/BOM, trailing content, NaN, a non-object, 60k-deep nesting, 64 KiB exactly vs one byte more (bytes, not characters), every kind of broken UTF-8, `__proto__` keys; a name outside the grammar or an unregistered kind is not opened |
+| 50 | locations and names | the grammar both ways, `local` and `synced` paths with the TMPDIR / CLAUDE_CONFIG_DIR fallbacks, a name part that would not parse back gives null, the host of a synced name equals `producer.host` |
+| 51 | FIXTURE card at the three layouts | bodyColumns 36 / 49 / 89 (1, 2, 3 across): a card across the whole width, `count`, `age`, `observed`, on every surface; every manifest case is the contract text with no count, age or clock rows and no overflow; a long reason is read to its end; the age follows the draw clock; off by default and switched off by the rows file: no card and the file is never read; a refused read is corrupt and the rest draws; TMPDIR honoured; one error when it fails, none when healthy; the master switch collects nothing |
 
 ## Acceptance
 
