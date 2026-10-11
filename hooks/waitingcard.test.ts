@@ -291,7 +291,7 @@ describe('the WAITING card: side files through the engine', () => {
     expect(lines).not.toMatch(/\d+ errors?\b/)
   })
 
-  test('the card is absent when no side file exists in the synced dir, and reads as 0', async ($, on) => {
+  test('the row on and no side-files dir at all: the card is drawn, reads 0 and says 沒有登記', async ($, on) => {
     await boot($, on, w => {
       w.now = REF_NOW
       w.files.set(ROWS_FILE, '{"waiting":true}')
