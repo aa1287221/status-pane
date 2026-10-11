@@ -82,6 +82,7 @@ export const makeSnap = (over: Partial<Snap> = {}): Snap => ({
       history: true,
       progress: true,
       fixture: false,
+      waiting: true,
     },
   },
   summary: ok('遷移 statusline 到 mod pane 的討論與實作'),
