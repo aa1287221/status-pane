@@ -133,6 +133,8 @@ export type World = {
   denyWrite: Set<string>
   /** Directories whose listing is refused. */
   denyList: Set<string>
+  /** Paths whose existence check is refused. */
+  denyExists: Set<string>
   /** Makes every `mv` exit 1, so the atomic write has to fall back. */
   denyMv: boolean
   /** Makes the `mv` onto these paths exit 1. */
@@ -346,6 +348,7 @@ export const makeWorld = (): World => {
     denyRead: new Set(),
     denyWrite: new Set(),
     denyList: new Set(),
+    denyExists: new Set(),
     denyMv: false,
     denyMvFor: new Set(),
     denyEnv: new Set(),
@@ -440,9 +443,10 @@ export const installWorld = (on: On, world: World): { clock: MockClock; advance:
     return { value: world.openResult }
   })
 
-  on('fs.exists', (_$, e) => ({
-    value: world.files.has(e.path) || [...world.files.keys()].some(k => k.startsWith(`${e.path}/`)),
-  }))
+  on('fs.exists', (_$, e) => {
+    if (world.denyExists.has(e.path)) return { deny: `EACCES: permission denied, stat '${e.path}'` }
+    return { value: world.files.has(e.path) || [...world.files.keys()].some(k => k.startsWith(`${e.path}/`)) }
+  })
   on('fs.stat', (_$, e) => {
     const text = world.files.get(e.path)
     if (text === undefined) return { deny: `ENOENT: no such file or directory, stat '${e.path}'` }
