@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { FILES, REF_NOW_MS } from './sync.fixtures'
+import { EXPECTED_TEXT, FILES, HUB_COMMIT, REF_NOW_MS } from './sync.fixtures'
 import { makeSnap } from './fixture'
 import { parseTogglesStrict, tailText } from './model'
 import { layoutTree, paneLayout } from './pane'
@@ -62,11 +62,11 @@ describe('sync-status: reader mapping (SCHEMA §9 data)', () => {
   })
 
   test('a stamp that is not on the calendar is n/a with the field named', async () => {
-    const r = await read('sync-status.malformed-stamp.json')
+    const r = await read('sync-status.stamp-not-real.json')
     expect(r.verdict).toBe('ok') // the file-level reader judges the envelope; data rules are syncOf's
     const res = syncOf(r, NOW_SEC)
     expect(res.ok).toBe(false)
-    if (!res.ok) expect(res.why).toMatch(/^n\/a（格式錯誤：data\.last_push_at /)
+    if (!res.ok) expect(res.why).toMatch(/^n\/a（格式錯誤：data\.last_fetch_at /)
   })
 
   test('a failed file gives the reader text and no data', async () => {
@@ -215,4 +215,104 @@ const okOfData = () => ({
   branch: 'sync-data-v2', upstream: 'origin/sync-data-v2', ahead: 0, behind: 3,
   lastPushSec: Date.parse('2026-10-10T11:00:00Z') / 1000, lastFetchSec: Date.parse('2026-10-10T11:50:00Z') / 1000,
   observedAtSec: Date.parse('2026-10-10T11:59:30Z') / 1000,
+})
+
+// ---- the hub chain: producer bytes -> reader -> card (E2E-01/02) ----
+
+type Case = {
+  case: string; file: string; sha256: string; source: string; verdict: string; violation?: string
+  ahead?: number; behind?: number; last_push_at?: string | null; last_fetch_at?: string | null
+}
+type Boundary = { file: string; now: string; verdict: string; violation?: string; why: string }
+const EXPECTED = JSON.parse(EXPECTED_TEXT) as { reference: { now: string }; cases: Case[]; boundaries: Boundary[] }
+
+/** The file read from its bytes, then the card's data rules: ok with the data, or the verdict and the n/a text. */
+const judged = async (file: string, nowMs: number) => {
+  const r = await read(file, nowMs)
+  if (r.verdict !== 'ok') return { verdict: String(r.verdict), why: r.text }
+  const res = syncOf(r, nowMs / 1000)
+  return res.ok ? { verdict: 'ok', v: res.v, why: '' } : { verdict: 'malformed', why: res.why }
+}
+
+const sha256 = async (text: string): Promise<string> => {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
+  return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('')
+}
+
+describe('sync-status: hub fixtures (E2E-01/02)', () => {
+  test('the copies are the hub bytes: every file has the sha256 its EXPECTED entry lists', async () => {
+    expect(HUB_COMMIT).toMatch(/^[0-9a-f]{7,40}$/)
+    expect(Object.keys(FILES).sort()).toEqual(EXPECTED.cases.map(c => c.file).sort())
+    for (const c of EXPECTED.cases) expect(await sha256(FILES[c.file]!)).toBe(c.sha256)
+  })
+
+  test('the table is not vacuous: every verdict is present and eight files come from the producer', () => {
+    expect(EXPECTED.reference.now).toBe('2026-10-10T12:00:00Z')
+    expect(EXPECTED.cases.length).toBeGreaterThanOrEqual(30)
+    const verdicts = new Set(EXPECTED.cases.map(c => c.verdict))
+    expect([...verdicts].sort()).toEqual(['failed', 'malformed', 'ok', 'stale'])
+    expect(EXPECTED.cases.filter(c => c.source === 'producer').length).toBe(8)
+  })
+
+  test('every case gets the verdict, the values and the named field the hub lists', async () => {
+    for (const c of EXPECTED.cases) {
+      const got = await judged(c.file, REF_NOW_MS)
+      expect([c.case, got.verdict]).toEqual([c.case, c.verdict])
+      if (c.verdict === 'ok') {
+        const v = (got as { v: ReturnType<typeof okOf> }).v
+        expect([c.case, v.ahead, v.behind]).toEqual([c.case, c.ahead, c.behind])
+        const sec = (stamp: string | null | undefined) => (stamp ? Date.parse(stamp) / 1000 : null)
+        expect([c.case, v.lastPushSec, v.lastFetchSec]).toEqual([c.case, sec(c.last_push_at), sec(c.last_fetch_at)])
+      }
+      if (c.violation) expect([c.case, got.why]).toEqual([c.case, expect.stringContaining(c.violation)])
+    }
+  })
+
+  test('every boundary gets the verdict the hub lists', async () => {
+    expect(EXPECTED.boundaries.length).toBeGreaterThanOrEqual(5)
+    for (const b of EXPECTED.boundaries) {
+      const got = await judged(b.file, Date.parse(b.now))
+      expect([b.why, got.verdict]).toEqual([b.why, b.verdict])
+      if (b.violation) expect([b.why, got.why]).toEqual([b.why, expect.stringContaining(b.violation)])
+    }
+  })
+
+  test('a stale file with a float count is stale, a fresh one is malformed (data rules come after staleness)', async () => {
+    expect((await judged('sync-status.stale-float.json', REF_NOW_MS)).verdict).toBe('stale')
+    expect((await judged('sync-status.malformed-float.json', REF_NOW_MS)).verdict).toBe('malformed')
+  })
+
+  const widths = [36, 49, 89]
+  const cardAt = (snap: ReturnType<typeof makeSnap>, columns: number) =>
+    paneParts(layoutTree(paneLayout(snap, { columns, nowMs: REF_NOW_MS, tzMin: 0, raster: true, cpuHist: [] }), FAKE_ELS) as unknown as Node, columns)
+  const cardFor = async (file: string, columns: number) => {
+    const res = syncOf(await read(file), NOW_SEC)
+    return cardOf(cardAt(makeSnap({ sync: res }), columns), 'SYNC')
+  }
+
+  test('producer bytes drawn: behind 3, diverged, in sync', async () => {
+    for (const columns of widths) {
+      const behind = await cardFor('sync-status.behind3.json', columns)
+      expect(behind.value).toBe('-3 PULL')
+      const diverged = await cardFor('sync-status.diverged.json', columns)
+      expect(diverged.value).toBe('+2 -3')
+      const same = await cardFor('sync-status.in-sync.json', columns)
+      expect(same.value).toBe('✓')
+    }
+  })
+
+  test('producer bytes drawn: the failed file shows the producer text and no counts', async () => {
+    const card = await cardFor('sync-status.failed.json', 89)
+    expect(card.value).toBe('')
+    const text = card.body.join('').replace(/\s/g, '')
+    expect(text).toContain('n/a（收集失敗：HEADisonmain;expectedsync-data-v2，上次成功')
+    expect(text).not.toMatch(/ahead|behind/)
+  })
+
+  test('producer bytes drawn: a timeout failure and a never-pushed file', async () => {
+    const slow = await cardFor('sync-status.failed-timeout.json', 89)
+    expect(slow.body.join('').replace(/\s/g, '')).toContain('n/a（收集失敗：gitdidnotanswerintime(3sper call'.replace(/\s/g, ''))
+    const nulls = await cardFor('sync-status.nulls.json', 89)
+    expect(nulls.body.join('\n')).toContain('n/a（無推送紀錄）')
+  })
 })
