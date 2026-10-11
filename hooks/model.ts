@@ -659,26 +659,54 @@ export const progressText = (snap: Snap | null, tools: Res<NowState | null>, sid
 
 // ---- in-flight: background work from the Stop snapshot, dated by the plugin's own bookkeeping ----
 
-export const BG_MAX_STARTS = 16
+export const BG_MAX_STARTS = 64
 export const INFLIGHT_SHOWN = 3
 const BG_LABEL_MAX = 48
 const NO_SNAPSHOT = '還沒有回合結束的快照'
 
 export type Inflight = { items: { label: string; sec: number; exact: boolean }[]; more: number; ageSec: number }
 
-/** The background call a main-loop or subagent tool call starts, or null. */
-export const startOf = (e: { tool: string; run_in_background?: unknown }, now: number): BgStart | null => {
+/** The background call a main-loop or subagent tool call starts, or null; a ScheduleWakeup that only cancels (`stop`) starts nothing. */
+export const startOf = (e: { tool: string; run_in_background?: unknown; stop?: unknown }, now: number): BgStart | null => {
   if (e.tool === 'Bash' && e.run_in_background === true) return { kind: 'shell', at: now }
   if (e.tool === 'Agent' && e.run_in_background === true) return { kind: 'subagent', at: now }
-  if (e.tool === 'CronCreate' || e.tool === 'ScheduleWakeup') return { kind: 'cron', at: now }
+  if (e.tool === 'CronCreate' || (e.tool === 'ScheduleWakeup' && e.stop !== true)) return { kind: 'cron', at: now }
   return null
+}
+
+const BG_KIND = { Bash: 'shell', Agent: 'subagent', CronCreate: 'cron', ScheduleWakeup: 'cron' } as const
+
+/** Whether a call of this tool can leave a task or schedule, so the hook reads the clock before it runs. */
+export const mayStartBg = (e: { tool: string }): boolean => Object.hasOwn(BG_KIND, e.tool)
+
+/** The task id a call's result names: Bash `backgroundTaskId`, an async Agent launch's `agentId`, CronCreate `id`; null otherwise. */
+export const taskIdOf = (tool: string, ran: unknown): string | null => {
+  const out = asRecord(asRecord(ran)?.result)
+  if (!out) return null
+  const id = tool === 'Bash' ? out.backgroundTaskId : tool === 'Agent' ? (out.status === 'async_launched' ? out.agentId : null) : tool === 'CronCreate' ? out.id : null
+  return typeof id === 'string' && id !== '' ? id : null
+}
+
+/** What a call that went through leaves: a keyed start when its result names the task, an open start, a veto, or nothing. */
+export const bgStartOf = (e: { tool: string; run_in_background?: unknown; stop?: unknown; agentId?: unknown }, ran: unknown, at: number): BgStart | null => {
+  if (!mayStartBg(e)) return null
+  const kind = BG_KIND[e.tool as keyof typeof BG_KIND]
+  const id = taskIdOf(e.tool, ran)
+  if (id !== null) return { kind, at, id }
+  const flagged = startOf(e, at) !== null
+  // an Agent not told otherwise runs in the background by default (2.1.296), so it may own a listed item all the same
+  if (!flagged && !(e.tool === 'Agent' && e.run_in_background !== false)) return null
+  return e.agentId === undefined && flagged ? { kind, at } : { kind, at, veto: true }
 }
 
 const sameSid = (s: InflightState | null, sid: string): InflightState | null => (s && s.sid === sid ? s : null)
 
 export const addStart = (s: InflightState | null, sid: string, start: BgStart): InflightState => {
   const cur = sameSid(s, sid)
-  return { sid, seenAt: cur?.seenAt ?? null, items: cur?.items ?? [], starts: [...(cur?.starts ?? []), start].slice(-BG_MAX_STARTS) }
+  const all = [...(cur?.starts ?? []), start]
+  // a start the cap evicted may have been the one that owned an item, so the count rule gives up until the Stop
+  const cut = cur?.dropped === true || all.length > BG_MAX_STARTS
+  return { sid, seenAt: cur?.seenAt ?? null, items: cur?.items ?? [], starts: all.slice(-BG_MAX_STARTS), ...(cut ? { dropped: true as const } : {}) }
 }
 
 /** An engine string as one printable line: controls and bidi marks go, the length is bounded. */
@@ -698,12 +726,13 @@ const labelOf = (t: Record<string, unknown>): { kind: BgKind; label: string } =>
 
 type StopInput = { background_tasks?: unknown; session_crons?: unknown }
 
-/** The state after a main-loop Stop: the snapshot's items, dated by a start when exactly one of its kind fits. */
+/** The state after a main-loop Stop: each new item is dated by the start that names its id, else by the one open start of its kind when nothing else could own it. */
 export const noteStop = (s: InflightState | null, sid: string, e: StopInput, now: number): InflightState | null => {
   const hasTasks = Array.isArray(e.background_tasks)
   const hasCrons = Array.isArray(e.session_crons)
   if (!hasTasks && !hasCrons) return s
   const cur = sameSid(s, sid)
+  const starts = cur?.starts ?? []
   const known = new Map((cur?.items ?? []).map(i => [i.id, i]))
   const incoming: { id: string; kind: BgKind; label: string }[] = []
   if (hasTasks) {
@@ -718,13 +747,20 @@ export const noteStop = (s: InflightState | null, sid: string, e: StopInput, now
   }
   const fresh = incoming.filter(i => !known.has(i.id))
   const startKind = (k: BgKind) => (k === 'cron' ? 'cron' : k === 'shell' ? 'shell' : k === 'subagent' ? 'subagent' : null)
+  const keyOf = (i: { id: string; kind: BgKind }) => starts.find(st => st.id === i.id && st.kind === startKind(i.kind))
   const items: BgItem[] = incoming.map(i => {
     const old = known.get(i.id)
-    if (old) return old
+    if (old) {
+      // a key that reached us after the Stop which first listed the task
+      const late = old.exact ? undefined : keyOf(old)
+      return late ? { ...old, since: late.at, exact: true } : old
+    }
+    const key = keyOf(i)
+    if (key) return { ...i, since: key.at, exact: true }
     const k = startKind(i.kind)
-    const starts = (cur?.starts ?? []).filter(st => st.kind === k)
-    const rivals = fresh.filter(f => startKind(f.kind) === k)
-    return starts.length === 1 && rivals.length === 1 ? { ...i, since: starts[0].at, exact: true } : { ...i, since: now, exact: false }
+    const open = starts.filter(st => st.kind === k && st.id === undefined)
+    const rivals = fresh.filter(f => startKind(f.kind) === k && !keyOf(f))
+    return !cur?.dropped && open.length === 1 && open[0].veto !== true && rivals.length === 1 ? { ...i, since: open[0].at, exact: true } : { ...i, since: now, exact: false }
   })
   // a field the engine left out is not an empty list: that class keeps what it had
   for (const old of cur?.items ?? []) {

@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { boot, cardOf, installWorld, makeSnap, makeWorld, paneView, pair } from './fixture'
-import { endTask, inflightOf, noteStop, progressText, startOf, addStart } from './model'
+import { boot, cardOf, deferred, installWorld, makeSnap, makeWorld, paneView, pair } from './fixture'
+import type { World } from './fixture'
+import { addStart, bgStartOf, endTask, inflightOf, mayStartBg, noteStop, progressText, startOf, taskIdOf } from './model'
 import { layoutTree, paneLayout } from './pane'
-import type { InflightState, NowState, Res } from './state'
+import type { BgStart, InflightState, NowState, Res } from './state'
 import { FAKE_ELS, findOverflow, paneParts } from './tree'
 import type { Node } from './tree'
 
@@ -29,6 +30,11 @@ const flight = (items: ReturnType<typeof item>[], seenAgoSec = 180, sid = 'S1'):
 const bt = (over: Record<string, unknown> = {}) => ({ id: 'b1', type: 'shell', status: 'running', description: 'd', command: 'sleep 600', ...over })
 const cron = (over: Record<string, unknown> = {}) => ({ id: 'c1', schedule: '*/5 * * * *', recurring: true, prompt: 'p', ...over })
 
+const withStarts = (starts: BgStart[], over: Partial<InflightState> = {}): InflightState => ({ sid: 'S1', seenAt: null, items: [], starts, ...over })
+const stopWith = (s: InflightState | null, tasks: Record<string, unknown>[], now = T0, crons: Record<string, unknown>[] = []) =>
+  noteStop(s, 'S1', { background_tasks: tasks, session_crons: crons }, now)!
+const waits = (s: InflightState) => s.items.map(i => [i.id, i.exact, i.since])
+
 const layoutAt = (columns: number, inflight: Res<InflightState | null> | undefined, sid: Res<string> = SID_OK) =>
   paneLayout(makeSnap(), { columns, nowMs: T0, tzMin: 0, raster: true, cpuHist: [], progress: { tools: IDLE, sid, ...(inflight ? { inflight } : {}) } })
 const cardAt = (columns: number, inflight: Res<InflightState | null> | undefined, sid?: Res<string>) =>
@@ -46,13 +52,113 @@ describe('inflight: where a background start comes from', () => {
     expect(startOf({ tool: 'Read', run_in_background: true }, T0)).toBeNull()
   })
 
+  test('a ScheduleWakeup that only cancels (stop: true) starts nothing; any other stop value is still a start', () => {
+    expect(startOf({ tool: 'ScheduleWakeup', stop: true }, T0)).toBeNull()
+    expect(startOf({ tool: 'ScheduleWakeup', stop: false }, T0)).toEqual({ kind: 'cron', at: T0 })
+    expect(startOf({ tool: 'ScheduleWakeup', stop: 'true' }, T0)).toEqual({ kind: 'cron', at: T0 })
+  })
+
   test('starts keep to their session and are capped', () => {
     let s: InflightState | null = null
-    for (let i = 0; i < 40; i++) s = addStart(s, 'S1', { kind: 'shell', at: T0 + i })
-    expect(s!.starts.length).toBe(16)
-    expect(s!.starts.at(-1)!.at).toBe(T0 + 39)
+    for (let i = 0; i < 100; i++) s = addStart(s, 'S1', { kind: 'shell', at: T0 + i })
+    expect(s!.starts.length).toBe(64)
+    expect(s!.starts.at(-1)!.at).toBe(T0 + 99)
+    expect(s!.dropped).toBe(true)
     expect(addStart(s, 'S2', { kind: 'cron', at: T0 })).toEqual({ sid: 'S2', seenAt: null, items: [], starts: [{ kind: 'cron', at: T0 }] })
   })
+
+  test('64 starts are all kept and nothing is marked cut; the 65th evicts the oldest and marks it', () => {
+    let s: InflightState | null = null
+    for (let i = 0; i < 64; i++) s = addStart(s, 'S1', { kind: 'shell', at: T0 + i })
+    expect(s!.starts.length).toBe(64)
+    expect(s!.starts[0].at).toBe(T0)
+    expect(s).not.toHaveProperty('dropped')
+    s = addStart(s, 'S1', { kind: 'shell', at: T0 + 64 })
+    expect(s.starts.length).toBe(64)
+    expect(s.starts[0].at).toBe(T0 + 1)
+    expect(s.dropped).toBe(true)
+  })
+
+  test('a cut once stays marked until the Stop, even through an add that cuts nothing', () => {
+    const marked: InflightState = { sid: 'S1', seenAt: T0, items: [], starts: [{ kind: 'shell', at: T0 }], dropped: true }
+    expect(addStart(marked, 'S1', { kind: 'cron', at: T0 + 1 }).dropped).toBe(true)
+    expect(addStart(marked, 'S2', { kind: 'cron', at: T0 + 1 })).not.toHaveProperty('dropped')
+  })
+})
+
+describe('inflight: the task id a call names', () => {
+  test('Bash names backgroundTaskId, an async Agent launch its agentId, CronCreate its id', () => {
+    expect(taskIdOf('Bash', { result: { backgroundTaskId: 'b7', backgroundedByUser: true } })).toBe('b7')
+    expect(taskIdOf('Agent', { result: { status: 'async_launched', agentId: 'agent-a' } })).toBe('agent-a')
+    expect(taskIdOf('CronCreate', { result: { id: 'c9', humanSchedule: 'every 5 minutes', recurring: true, durable: false } })).toBe('c9')
+  })
+
+  test('anything else names nothing: a finished agent, a wakeup, another tool, another key, an empty or non-string id', () => {
+    expect(taskIdOf('Agent', { result: { status: 'completed', agentId: 'agent-a' } })).toBeNull()
+    expect(taskIdOf('Agent', { result: { agentId: 'agent-a' } })).toBeNull()
+    expect(taskIdOf('ScheduleWakeup', { result: { scheduledFor: 1, id: 'w1', backgroundTaskId: 'w1', agentId: 'w1' } })).toBeNull()
+    expect(taskIdOf('Read', { result: { id: 'r1', backgroundTaskId: 'r1', agentId: 'r1' } })).toBeNull()
+    // each tool reads its own key only
+    expect(taskIdOf('Bash', { result: { id: 'x', agentId: 'x' } })).toBeNull()
+    expect(taskIdOf('CronCreate', { result: { backgroundTaskId: 'x', agentId: 'x' } })).toBeNull()
+    expect(taskIdOf('Agent', { result: { status: 'async_launched', id: 'x', backgroundTaskId: 'x' } })).toBeNull()
+    for (const id of ['', 7, null, undefined, {}, ['b1']]) {
+      expect(taskIdOf('Bash', { result: { backgroundTaskId: id } })).toBeNull()
+      expect(taskIdOf('CronCreate', { result: { id } })).toBeNull()
+      expect(taskIdOf('Agent', { result: { status: 'async_launched', agentId: id } })).toBeNull()
+    }
+  })
+
+  test('a result that is not the expected shape names nothing and never throws', () => {
+    for (const ran of [null, undefined, 'x', 7, true, [], {}, { result: 'x' }, { result: null }, { result: 7 }, { result: [] }, { deny: 'no' }]) {
+      for (const tool of ['Bash', 'Agent', 'CronCreate', 'ScheduleWakeup', 'Read']) expect(taskIdOf(tool, ran)).toBeNull()
+    }
+    // control: the same calls do name a task when the result has the shape
+    expect(taskIdOf('Bash', { result: { backgroundTaskId: 'ok' } })).toBe('ok')
+  })
+})
+
+describe('inflight: the start a finished call leaves', () => {
+  test('only Bash, Agent, CronCreate and ScheduleWakeup may start background work, by own name', () => {
+    for (const tool of ['Bash', 'Agent', 'CronCreate', 'ScheduleWakeup']) expect(mayStartBg({ tool })).toBe(true)
+    for (const tool of ['Read', 'Edit', 'bash', 'agent', '', 'toString', 'constructor', '__proto__', 'hasOwnProperty']) expect(mayStartBg({ tool })).toBe(false)
+    expect(bgStartOf({ tool: 'constructor', run_in_background: true }, { result: { backgroundTaskId: 'b1' } }, T0)).toBeNull()
+  })
+
+  const NAMES = (key: string, id: string) => ({ result: { [key]: id } })
+  const NONE = { result: {} }
+  const rows: [string, Record<string, unknown>, unknown, BgStart | null][] = [
+    ['main Bash in the background, its result names the task: keyed', { tool: 'Bash', run_in_background: true }, NAMES('backgroundTaskId', 'b1'), { kind: 'shell', at: T0, id: 'b1' }],
+    ['Bash without the flag whose result names a task (moved by hand): keyed', { tool: 'Bash' }, { result: { backgroundTaskId: 'b7', backgroundedByUser: true } }, { kind: 'shell', at: T0, id: 'b7' }],
+    ['main Bash in the background, no id: an open start', { tool: 'Bash', run_in_background: true }, NONE, { kind: 'shell', at: T0 }],
+    ['main Bash in the background, no result at all: an open start', { tool: 'Bash', run_in_background: true }, undefined, { kind: 'shell', at: T0 }],
+    ['subagent Bash in the background, no id: a veto', { tool: 'Bash', run_in_background: true, agentId: 'a1' }, NONE, { kind: 'shell', at: T0, veto: true }],
+    ['subagent Bash in the background, its result names the task: keyed', { tool: 'Bash', run_in_background: true, agentId: 'a1' }, NAMES('backgroundTaskId', 'sub1'), { kind: 'shell', at: T0, id: 'sub1' }],
+    ['subagent Bash in the foreground, no id: nothing', { tool: 'Bash', agentId: 'a1' }, NONE, null],
+    ['main Bash in the foreground, no id: nothing', { tool: 'Bash' }, NONE, null],
+    ['main Agent with the flag, no id: an open start', { tool: 'Agent', run_in_background: true }, NONE, { kind: 'subagent', at: T0 }],
+    ['main Agent without the flag, no id: a veto, the engine runs it in the background by default', { tool: 'Agent' }, NONE, { kind: 'subagent', at: T0, veto: true }],
+    ['subagent Agent without the flag, no id: a veto', { tool: 'Agent', agentId: 'a1' }, NONE, { kind: 'subagent', at: T0, veto: true }],
+    ['subagent Agent with the flag, no id: a veto', { tool: 'Agent', run_in_background: true, agentId: 'a1' }, NONE, { kind: 'subagent', at: T0, veto: true }],
+    ['Agent with run_in_background false: nothing', { tool: 'Agent', run_in_background: false }, NONE, null],
+    ['Agent async launch, with the flag: keyed', { tool: 'Agent', run_in_background: true }, { result: { status: 'async_launched', agentId: 'agent-a' } }, { kind: 'subagent', at: T0, id: 'agent-a' }],
+    ['Agent async launch, without the flag: keyed', { tool: 'Agent' }, { result: { status: 'async_launched', agentId: 'agent-b' } }, { kind: 'subagent', at: T0, id: 'agent-b' }],
+    ['Agent with the flag whose result is a finished run: an open start, not keyed', { tool: 'Agent', run_in_background: true }, { result: { status: 'completed', agentId: 'agent-a' } }, { kind: 'subagent', at: T0 }],
+    ['main CronCreate, no id: an open start', { tool: 'CronCreate' }, NONE, { kind: 'cron', at: T0 }],
+    ['CronCreate, its result names the cron: keyed', { tool: 'CronCreate' }, NAMES('id', 'c9'), { kind: 'cron', at: T0, id: 'c9' }],
+    ['subagent CronCreate, no id: a veto', { tool: 'CronCreate', agentId: 'a1' }, NONE, { kind: 'cron', at: T0, veto: true }],
+    ['subagent CronCreate, its result names the cron: keyed', { tool: 'CronCreate', agentId: 'a1' }, NAMES('id', 'c9'), { kind: 'cron', at: T0, id: 'c9' }],
+    ['main ScheduleWakeup (its result has no id): an open start', { tool: 'ScheduleWakeup' }, { result: { scheduledFor: T0, clampedDelaySeconds: 60, wasClamped: false } }, { kind: 'cron', at: T0 }],
+    ['subagent ScheduleWakeup: a veto', { tool: 'ScheduleWakeup', agentId: 'a1' }, NONE, { kind: 'cron', at: T0, veto: true }],
+    ['ScheduleWakeup with stop true: nothing', { tool: 'ScheduleWakeup', stop: true }, { result: { stopped: true, cancelledWakeups: 0 } }, null],
+    ['subagent ScheduleWakeup with stop true: nothing', { tool: 'ScheduleWakeup', stop: true, agentId: 'a1' }, NONE, null],
+    ['Read: nothing', { tool: 'Read' }, { result: 'text' }, null],
+  ]
+  for (const [name, input, ran, want] of rows) {
+    test(`bgStartOf: ${name}`, () => {
+      expect(bgStartOf(input as never, ran, T0)).toEqual(want)
+    })
+  }
 })
 
 describe('inflight: the Stop snapshot', () => {
@@ -76,6 +182,84 @@ describe('inflight: the Stop snapshot', () => {
     const s0 = addStart(null, 'S1', { kind: 'shell', at: T0 - 90_000 })
     const out = noteStop(s0, 'S1', { background_tasks: [bt(), bt({ id: 'b2' })], session_crons: [] }, T0)!
     expect(out.items.map(i => [i.id, i.exact, i.since])).toEqual([['b1', false, T0], ['b2', false, T0]])
+  })
+
+  test('a task whose id a start names is exact with that start, whatever else is fresh or open', () => {
+    const s = withStarts([{ kind: 'shell', at: T0 - 90_000, id: 'b1' }, { kind: 'shell', at: T0 - 60_000, id: 'b2' }, { kind: 'shell', at: T0 - 30_000 }])
+    expect(waits(stopWith(s, [bt(), bt({ id: 'b2' })]))).toEqual([['b1', true, T0 - 90_000], ['b2', true, T0 - 60_000]])
+  })
+
+  test('a keyed task does not count against the open start: the other fresh task is dated by it', () => {
+    const s = withStarts([{ kind: 'shell', at: T0 - 90_000, id: 'b1' }, { kind: 'shell', at: T0 - 30_000 }])
+    expect(waits(stopWith(s, [bt(), bt({ id: 'b2' })]))).toEqual([['b1', true, T0 - 90_000], ['b2', true, T0 - 30_000]])
+  })
+
+  test('a key whose task the Stop does not list dates no other task', () => {
+    expect(waits(stopWith(withStarts([{ kind: 'shell', at: T0 - 90_000, id: 'gone' }]), [bt()]))).toEqual([['b1', false, T0]])
+  })
+
+  test('a start keyed to the same id but another kind does not date the task; the same kind does', () => {
+    expect(waits(stopWith(withStarts([{ kind: 'cron', at: T0 - 90_000, id: 'b1' }]), [bt()]))).toEqual([['b1', false, T0]])
+    expect(waits(stopWith(withStarts([{ kind: 'shell', at: T0 - 90_000, id: 'c1' }]), [], T0, [cron()]))).toEqual([['c1', false, T0]])
+    expect(waits(stopWith(withStarts([{ kind: 'shell', at: T0 - 90_000, id: 'a1' }]), [bt({ id: 'a1', type: 'subagent', command: undefined })]))).toEqual([['a1', false, T0]])
+    expect(waits(stopWith(withStarts([{ kind: 'cron', at: T0 - 90_000, id: 'c1' }]), [], T0, [cron()]))).toEqual([['c1', true, T0 - 90_000]])
+  })
+
+  test('a veto of the kind makes the count rule give up, beside an open start or alone; a veto of another kind does not', () => {
+    const open: BgStart = { kind: 'shell', at: T0 - 90_000 }
+    const veto: BgStart = { kind: 'shell', at: T0 - 30_000, veto: true }
+    expect(waits(stopWith(withStarts([open, veto]), [bt()]))).toEqual([['b1', false, T0]])
+    expect(waits(stopWith(withStarts([veto]), [bt()]))).toEqual([['b1', false, T0]])
+    expect(waits(stopWith(withStarts([open]), [bt()]))).toEqual([['b1', true, T0 - 90_000]])
+    expect(waits(stopWith(withStarts([open, { kind: 'subagent', at: T0 - 30_000, veto: true }]), [bt()]))).toEqual([['b1', true, T0 - 90_000]])
+  })
+
+  test('a start list that lost starts to the cap gives up the count rule but not a key, and the Stop clears the mark', () => {
+    const s = withStarts([{ kind: 'shell', at: T0 - 90_000 }, { kind: 'cron', at: T0 - 60_000, id: 'c1' }], { dropped: true })
+    const out = stopWith(s, [bt()], T0, [cron()])
+    expect(waits(out)).toEqual([['b1', false, T0], ['c1', true, T0 - 60_000]])
+    expect(out).not.toHaveProperty('dropped')
+    expect(out.starts).toEqual([])
+  })
+
+  test('a key that arrives after a Stop listed the task dates it at the next Stop', () => {
+    const first = stopWith(null, [bt()])
+    expect(waits(first)).toEqual([['b1', false, T0]])
+    const keyed = addStart(first, 'S1', { kind: 'shell', at: T0 - 50_000, id: 'b1' })
+    expect(waits(stopWith(keyed, [bt()], T0 + 60_000))).toEqual([['b1', true, T0 - 50_000]])
+  })
+
+  test('a late key is used for its own kind only, and never moves a task that is already exact', () => {
+    const first = stopWith(null, [bt()])
+    expect(waits(stopWith(addStart(first, 'S1', { kind: 'cron', at: T0 - 50_000, id: 'b1' }), [bt()], T0 + 60_000))).toEqual([['b1', false, T0]])
+    const exact = stopWith(withStarts([{ kind: 'shell', at: T0 - 90_000 }]), [bt()])
+    expect(waits(exact)).toEqual([['b1', true, T0 - 90_000]])
+    expect(waits(stopWith(addStart(exact, 'S1', { kind: 'shell', at: T0 - 10_000, id: 'b1' }), [bt()], T0 + 60_000))).toEqual([['b1', true, T0 - 90_000]])
+  })
+
+  test('a monitor, a workflow or a task of an unknown type is never dated by a shell start, open or keyed', () => {
+    const tasks: [string, Record<string, unknown>][] = [
+      ['m', bt({ id: 'm', type: 'monitor', server: 'srv', tool: 'watch', command: undefined })],
+      ['w', bt({ id: 'w', type: 'workflow', name: 'review', command: undefined })],
+      ['o', bt({ id: 'o', type: 'weird', command: undefined })],
+    ]
+    for (const [id, task] of tasks) {
+      expect(waits(stopWith(withStarts([{ kind: 'shell', at: T0 - 90_000 }]), [task]))).toEqual([[id, false, T0]])
+      expect(waits(stopWith(withStarts([{ kind: 'shell', at: T0 - 90_000, id }]), [task]))).toEqual([[id, false, T0]])
+    }
+    // the same start does date a shell
+    expect(waits(stopWith(withStarts([{ kind: 'shell', at: T0 - 90_000 }]), [bt()]))).toEqual([['b1', true, T0 - 90_000]])
+  })
+
+  test('tasks of other kinds that are new at the same Stop do not take the start from the one task of its kind', () => {
+    const s = withStarts([{ kind: 'shell', at: T0 - 90_000 }])
+    const out = stopWith(s, [bt(), bt({ id: 'w', type: 'workflow', name: 'review', command: undefined })], T0, [cron()])
+    expect(waits(out)).toEqual([['b1', true, T0 - 90_000], ['w', false, T0], ['c1', false, T0]])
+  })
+
+  test('an open start dates only a task of its own kind', () => {
+    const s = withStarts([{ kind: 'shell', at: T0 - 90_000 }])
+    expect(waits(stopWith(s, [bt({ id: 'a', type: 'subagent', command: undefined })], T0, [cron()]))).toEqual([['a', false, T0], ['c1', false, T0]])
   })
 
   test('a task seen before keeps its start; one gone from the snapshot is dropped', () => {
@@ -269,7 +453,7 @@ describe('through the engine: Stop snapshot, tool.call starts and notifications'
   }
 
   for (const mode of ['deny', 'error', 'throw', 'subagent'] as const) {
-    test(`a background call that ends as ${mode} leaves no start: a fresh shell at the Stop is only a lower bound`, async ($, on) => {
+    test(`a background call that ends as ${mode} leaves nothing that dates the item: a fresh shell at the Stop is only a lower bound`, async ($, on) => {
       const { world, clock } = await boot($, on, w => (w.now = T0))
       if (mode === 'deny') world.toolResult = () => ({ deny: 'no' })
       if (mode === 'error') world.toolResult = () => ({ result: {}, isError: true })
@@ -293,6 +477,105 @@ describe('through the engine: Stop snapshot, tool.call starts and notifications'
     await $.classic.Stop({ stop_hook_active: false, background_tasks: [bt()], session_crons: [] })
     await clock.settle()
     expect((await $.command.run(PROGRESS)).text).toContain('BG   shell 1m00s')
+  })
+
+  // a call of the fake machine at `at`, and the Stop at `at` with what /progress then says
+  type Eng = Parameters<typeof paneView>[0]
+  type Booted = Awaited<ReturnType<typeof boot>>
+  const launch = async ($: Eng, b: Booted, at: number, input: Record<string, unknown>, result: unknown = {}) => {
+    b.world.now = at
+    b.world.toolResult = () => ({ result })
+    await $.tool.call(input as never)
+  }
+  const stopSays = async ($: Eng, b: Booted, at: number, tasks: Record<string, unknown>[], crons: Record<string, unknown>[] = []) => {
+    b.world.now = at
+    await $.classic.Stop({ stop_hook_active: false, background_tasks: tasks, session_crons: crons } as never)
+    await b.clock.settle()
+    return (await $.command.run(PROGRESS)).text
+  }
+  const agent = (id: string) => bt({ id, type: 'subagent', agent_type: 'Explore', command: undefined })
+
+  test('a main shell that ended and a shell a subagent started: the one shell the Stop lists is not dated by the main call', async ($, on) => {
+    const b = await boot($, on, w => (w.now = T0))
+    await launch($, b, T0, { tool: 'Bash', command: 'a', run_in_background: true })
+    await launch($, b, T0 + 30_000, { tool: 'Bash', command: 'b', run_in_background: true, agentId: 'a1' })
+    expect(await stopSays($, b, T0 + 60_000, [bt()])).toContain('BG   ≥shell 0s')
+  })
+
+  test('the same with the ids the results name: the Stop lists the subagent shell and its own call dates it', async ($, on) => {
+    const b = await boot($, on, w => (w.now = T0))
+    await launch($, b, T0, { tool: 'Bash', command: 'a', run_in_background: true }, { backgroundTaskId: 'm1' })
+    await launch($, b, T0 + 30_000, { tool: 'Bash', command: 'b', run_in_background: true, agentId: 'a1' }, { backgroundTaskId: 'sub1' })
+    expect(await stopSays($, b, T0 + 60_000, [bt({ id: 'sub1' })])).toContain('BG   shell 30s')
+  })
+
+  test('a main wakeup that has fired and a cron a subagent created: the cron is a lower bound without an id, dated by it with one', async ($, on) => {
+    const b = await boot($, on, w => (w.now = T0))
+    await launch($, b, T0, { tool: 'ScheduleWakeup', delaySeconds: 60 }, { scheduledFor: T0 + 60_000, clampedDelaySeconds: 60, wasClamped: false })
+    await launch($, b, T0 + 45_000, { tool: 'CronCreate', cron: '*/5 * * * *', agentId: 'a1' }, { humanSchedule: 'every 5 minutes', recurring: true, durable: false })
+    expect(await stopSays($, b, T0 + 90_000, [], [cron({ id: 'c9' })])).toContain('BG   ≥cron 0s')
+  })
+
+  test('the same cron, its result naming the id: it waited since the subagent call', async ($, on) => {
+    const b = await boot($, on, w => (w.now = T0))
+    await launch($, b, T0, { tool: 'ScheduleWakeup', delaySeconds: 60 }, { scheduledFor: T0 + 60_000, clampedDelaySeconds: 60, wasClamped: false })
+    await launch($, b, T0 + 45_000, { tool: 'CronCreate', cron: '*/5 * * * *', agentId: 'a1' }, { id: 'c9', humanSchedule: 'every 5 minutes', recurring: true, durable: false })
+    expect(await stopSays($, b, T0 + 90_000, [], [cron({ id: 'c9' })])).toContain('BG   cron 45s')
+  })
+
+  test('a main agent with the flag that ended and one without it still running: the engine runs both in the background, so the wait is a lower bound', async ($, on) => {
+    const b = await boot($, on, w => (w.now = T0))
+    await launch($, b, T0, { tool: 'Agent', subagent_type: 'Explore', prompt: 'a', run_in_background: true })
+    await launch($, b, T0 + 20_000, { tool: 'Agent', subagent_type: 'Explore', prompt: 'b' })
+    expect(await stopSays($, b, T0 + 50_000, [agent('x1')])).toContain('BG   ≥agent Explore 0s')
+  })
+
+  test('the same agents with the ids their results name: the one listed waited since its own call', async ($, on) => {
+    const b = await boot($, on, w => (w.now = T0))
+    await launch($, b, T0, { tool: 'Agent', subagent_type: 'Explore', prompt: 'a', run_in_background: true }, { status: 'async_launched', agentId: 'agent-a' })
+    await launch($, b, T0 + 20_000, { tool: 'Agent', subagent_type: 'Explore', prompt: 'b' }, { status: 'async_launched', agentId: 'agent-b' })
+    expect(await stopSays($, b, T0 + 50_000, [agent('agent-b')])).toContain('BG   agent Explore 30s')
+  })
+
+  test('a shell moved to the background by hand (no flag on the call) is dated by the id its result names', async ($, on) => {
+    const b = await boot($, on, w => (w.now = T0))
+    await launch($, b, T0, { tool: 'Bash', command: 'sleep 600' }, { stdout: '', backgroundTaskId: 'b7', backgroundedByUser: true })
+    expect(await stopSays($, b, T0 + 40_000, [bt({ id: 'b7' })])).toContain('BG   shell 40s')
+  })
+
+  test('a ScheduleWakeup that only cancels (stop: true) leaves no start', async ($, on) => {
+    const b = await boot($, on, w => (w.now = T0))
+    await launch($, b, T0, { tool: 'ScheduleWakeup', stop: true }, { stopped: true, cancelledWakeups: 0 })
+    expect(await stopSays($, b, T0 + 60_000, [], [cron()])).toContain('BG   ≥cron 0s')
+  })
+
+  test('a ScheduleWakeup without stop dates the cron it leaves', async ($, on) => {
+    const b = await boot($, on, w => (w.now = T0))
+    await launch($, b, T0, { tool: 'ScheduleWakeup', delaySeconds: 60 }, { scheduledFor: T0 + 60_000, clampedDelaySeconds: 60, wasClamped: false })
+    expect(await stopSays($, b, T0 + 60_000, [], [cron({ recurring: false })])).toContain('BG   wakeup 1m00s')
+  })
+
+  test('a task listed before its call returned is dated at the next Stop by the key that arrived late', async ($, on) => {
+    const b = await boot($, on, w => (w.now = T0))
+    const gate = deferred()
+    b.world.toolResult = () => gate.promise.then(() => ({ result: { backgroundTaskId: 'b1' } }))
+    const held = $.tool.call({ tool: 'Bash', command: 'x', run_in_background: true, agentId: 'a1' } as never)
+    // the call is dated once it is held inside the engine
+    await b.clock.settle()
+    expect(await stopSays($, b, T0 + 10_000, [bt()])).toContain('BG   ≥shell 0s')
+    gate.release()
+    await held
+    expect(await stopSays($, b, T0 + 60_000, [bt()])).toContain('BG   shell 1m00s')
+  })
+
+  test('63 keyed starts and an open one after a veto push the veto out: the cut start list gives up the count rule', async ($, on) => {
+    const b = await boot($, on, w => (w.now = T0))
+    await launch($, b, T0, { tool: 'Bash', command: 'sub', run_in_background: true, agentId: 'a1' })
+    let n = 0
+    b.world.toolResult = () => ({ result: { id: `k${n++}` } })
+    for (let i = 0; i < 63; i++) await $.tool.call({ tool: 'CronCreate', cron: '* * * * *' } as never)
+    await launch($, b, T0 + 30_000, { tool: 'Bash', command: 'main', run_in_background: true })
+    expect(await stopSays($, b, T0 + 60_000, [bt()])).toContain('BG   ≥shell 0s')
   })
 
   test('the hidden ids last until the next Stop only: a reused id is shown again', async ($, on) => {
@@ -320,7 +603,7 @@ describe('through the engine: Stop snapshot, tool.call starts and notifications'
       await m.unmount()
     }
     await clock.settle()
-    expect((await $.command.run(PROGRESS)).text).toContain('BG   ≥shell 0s\n')
+    expect((await $.command.run(PROGRESS)).text).toContain('BG   ≥shell 0s\n     snapshot 0s ago')
   })
 
   test('hidden ids belong to the session that drew them', async ($, on) => {
@@ -338,6 +621,23 @@ describe('through the engine: Stop snapshot, tool.call starts and notifications'
     world.session.id = sid
     await clock.settle()
     expect((await $.command.run(PROGRESS)).text).toContain('BG   ≥shell 0s\n     ≥shell 0s')
+  })
+
+  test('a notification of another session starts the hidden ids over: the first session\'s are gone when it draws again', async ($, on) => {
+    const { world, clock } = await boot($, on, w => (w.now = T0))
+    const note = async (id: string) => {
+      const m = await $.ui.mount({ plugin: 'status-pane', surface: 'terminal', component: 'UserMessage', props: NOTE(id) })
+      await m.drawn()
+      await m.unmount()
+    }
+    const sid = world.session.id
+    await $.classic.Stop({ stop_hook_active: false, background_tasks: [bt(), bt({ id: 'b2' })], session_crons: [] })
+    world.session.id = 'S2-other'
+    await note('b2')
+    world.session.id = sid
+    await note('b1')
+    await clock.settle()
+    expect((await $.command.run(PROGRESS)).text).toContain('BG   ≥shell 0s\n     snapshot 0s ago')
   })
 
   test('a cron in the snapshot shows as cron, a one-shot as wakeup; a later empty Stop clears both', async ($, on) => {

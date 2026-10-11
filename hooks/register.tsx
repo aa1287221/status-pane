@@ -3,10 +3,10 @@ import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import { MCP_EVERY_MS, refresh } from './collect'
 import type { Io } from './collect'
-import { addRun, addStart, endTask, noteStop, startOf, cannotDraw, DEAD_MS, dropRun, effortFrom, mergeTail, patchLineCount, progressText, runOf, sidOf, STALE_MS, tailText, why } from './model'
+import { addRun, addStart, bgStartOf, endTask, mayStartBg, noteStop, cannotDraw, DEAD_MS, dropRun, effortFrom, mergeTail, patchLineCount, progressText, runOf, sidOf, STALE_MS, tailText, why } from './model'
 import { HIST_MAX, layoutTree, paneLayout } from './pane'
 import { readBytesCapped } from './sidefile'
-import type { InflightState, NowState, Res } from './state'
+import type { BgStart, InflightState, NowState, Res } from './state'
 
 const PANE = 'status-pane'
 const TICK_MS = 30_000
@@ -270,11 +270,10 @@ const progressSources = async (
   return { tools, sid, inflight }
 }
 
-/** Dates a background call that went through, so the Stop snapshot that lists it can say how long it waited. Never throws. */
-const noteBgStart = async ($: EngineInterface, e: { tool: string; run_in_background?: unknown }, at: number | null): Promise<void> => {
+/** Records what a background call that went through left, so the Stop snapshot that lists it can say how long it waited. Never throws. */
+const noteBgStart = async ($: EngineInterface, start: BgStart | null): Promise<void> => {
+  if (!start) return
   try {
-    const start = at === null ? null : startOf(e, at)
-    if (!start) return
     const sid = sidOf(await $.session.id())
     await update($, inflightA, s => addStart(s, sid, start))
   } catch {
@@ -370,9 +369,8 @@ export const register: Register = on => {
 
   on('tool.call', async ($, e, next) => {
     const called = await noteStart($, run, e)
-    // only a main-loop background call is dated, and only once it went through: a denied or failed one made no task
-    let at: number | null = null
-    if (e.agentId === undefined && startOf(e, 0)) at = await $.clock.now().catch(() => null)
+    // a call that can leave a task, a subagent's too, is dated before it runs and recorded only once it went through
+    const at = mayStartBg(e) ? await $.clock.now().catch(() => null) : null
     let ran
     try {
       ran = await next(e)
@@ -380,7 +378,7 @@ export const register: Register = on => {
       await noteEnd($, run, called)
     }
     const r = ran as { deny?: unknown; isError?: unknown } | null | undefined
-    if (at !== null && r?.deny === undefined && r?.isError !== true) await noteBgStart($, e, at)
+    if (at !== null && r?.deny === undefined && r?.isError !== true) await noteBgStart($, bgStartOf(e, ran, at))
     try {
       const n = patchLineCount(ran)
       if (n.add > 0 || n.rm > 0) {

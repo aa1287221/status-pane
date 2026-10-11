@@ -51,11 +51,11 @@ export type BgKind = 'shell' | 'subagent' | 'monitor' | 'workflow' | 'other' | '
 /** A background task or schedule the last Stop snapshot listed. `since` is epoch ms; `exact` is false when it is only the Stop that first listed it. */
 export type BgItem = { id: string; kind: BgKind; label: string; since: number; exact: boolean }
 
-/** A background call this session made since the last Stop; the snapshot lists what survived, these only date it. */
-export type BgStart = { kind: 'shell' | 'subagent' | 'cron'; at: number }
+/** A background call this session made since the last Stop; the snapshot lists what survived, these only date it. `id` is the task its result named; `veto` is a call that may own a listed item but cannot date it. */
+export type BgStart = { kind: 'shell' | 'subagent' | 'cron'; at: number; id?: string; veto?: true }
 
-/** Background work for one session: the last Stop snapshot (`seenAt`, null until one arrives) and the starts since. */
-export type InflightState = { sid: string; seenAt: number | null; items: BgItem[]; starts: BgStart[] }
+/** Background work for one session: the last Stop snapshot (`seenAt`, null until one arrives) and the starts since. `dropped` is set when the cap evicted a start since the last Stop. */
+export type InflightState = { sid: string; seenAt: number | null; items: BgItem[]; starts: BgStart[]; dropped?: true }
 
 export type CpuSample = { idle: number; total: number }
 
