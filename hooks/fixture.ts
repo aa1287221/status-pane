@@ -275,7 +275,10 @@ export const NOW_SEC = Math.floor(MOCKUP_AT / 1000)
 
 const iso = (sec: number) => new Date(sec * 1000).toISOString()
 
-/** A healthy session: every row of the SPEC mockup has data, nothing is on disk that should not be. */
+/**
+ * A healthy session: every row of the SPEC mockup has data, and nothing is on disk that should not be, bar one file. Unlike a real machine
+ * it has a rows file, `{"waiting":false}` (WAITING is on by default and would add a card to every pane); the WAITING tests overwrite or delete it.
+ */
 export const makeWorld = (): World => {
   const files = new Map<string, string>()
   const put = (path: string, text: string) => files.set(path, text)
