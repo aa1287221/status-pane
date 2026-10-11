@@ -210,6 +210,15 @@ describe('AC1 empty states', () => {
     expect(waitingHead(waitingView(data, NOW, 0))).toEqual({ count: '0', dueText: null })
   })
 
+  test('dir absent and a list that throws ENOENT on a missing dir: 0, not n/a (exists is asked first)', async () => {
+    const io = fakeIo({})
+    io.list = async p => {
+      throw new Error(`ENOENT: no such file or directory, scandir '${p}'`)
+    }
+    const data = await collectWaiting(io, LOC, NOW)
+    expect(data).toEqual({ items: [], openTotal: 0, down: [], skipped: 0 })
+  })
+
   test('(b) only non-matching names: verified empty', async () => {
     const data = await collectWaiting(fakeIo({ 'waiting.json': '{}', 'other.x.json': '{}' }), LOC, NOW)
     expect(waitingHead(waitingView(data, NOW, 0))).toEqual({ count: '0', dueText: null })
