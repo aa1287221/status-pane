@@ -9,6 +9,27 @@ import { readBytesCapped } from './sidefile'
 import type { BgStart, InflightState, NowState, Res } from './state'
 import { COMPACT_TEXT, compactConfig, fillOf, shouldSuggest } from './compact'
 import type { CompactState } from './state'
+import {
+  FILES_LISTED,
+  HANDOFFS_MAX,
+  KEEP_DEADLINE_MS,
+  KEEP_MARK,
+  TASK_BYTES_MAX,
+  buildKeep,
+  callPath,
+  decideCompact,
+  keepConfig,
+  keepReport,
+  nextKeepState,
+  parseTaskFile,
+  pickTaskFiles,
+  recordPath,
+  taskDirOf,
+  tasksOf,
+  withKeep,
+} from './keeplist'
+import type { Built, TaskDrop, TaskItem } from './keeplist'
+import type { KeepLast, KeepState, KeepTrigger, KeptFiles } from './state'
 
 const PANE = 'status-pane'
 const TICK_MS = 30_000
@@ -33,6 +54,8 @@ const checkedA = atom({ plugin: 'status-pane', key: 'checkedAt' } as const, 0)
 const nowA = atom({ plugin: 'status-pane', key: 'now' } as const, null)
 const inflightA = atom({ plugin: 'status-pane', key: 'inflight' } as const, null)
 const compactA = atom({ plugin: 'status-pane', key: 'compact' } as const, null as CompactState | null)
+const keepA = atom({ plugin: 'status-pane', key: 'keep' } as const, null as KeepState | null)
+const keptA = atom({ plugin: 'status-pane', key: 'kept' } as const, { sid: '', files: [], handoffs: [] } as KeptFiles)
 
 /** What one load of the module keeps in memory; everything drawn lives in $.state. */
 type Run = {
@@ -365,6 +388,171 @@ const noteMeasure = async ($: EngineInterface, run: Run, e: { changed: readonly 
   }
 }
 
+/** What one compaction is told: left as it came, answered with a skip, or given other instructions. */
+type KeepPlan = { kind: 'pass' } | { kind: 'skip'; reason: string } | { kind: 'rewrite'; instructions: string }
+const PASS: KeepPlan = { kind: 'pass' }
+type CompactIn = { trigger: string; agentId?: string | undefined; instructions?: string | null | undefined }
+type TaskRead = { items: TaskItem[]; more: number; source: string; problems: string[] }
+type Recorded = { files: string[]; handoffs: string[]; gone: number; sources: { files: string; handoffs: string }; problems: string[] }
+type Gathered = { keep: Built | null; sources: KeepLast['sources']; problems: string[]; gone: number }
+
+/** Task files are read this many at a time; the state keeps this many problem lines of at most 200 characters. */
+const KEEP_BATCH = 25
+const KEEP_PROBLEMS_MAX = 10
+const clip = (text: string, max = 200): string => (text.length > max ? `${text.slice(0, max - 3)}...` : text)
+
+/** The open tasks of the session's list, and a line for each file that could not be read. Throws only when the directory cannot be listed. */
+const gatherTasks = async ($: EngineInterface, sessionId: string): Promise<TaskRead> => {
+  const env = {
+    CLAUDE_CONFIG_DIR: await $.env.get('CLAUDE_CONFIG_DIR'),
+    HOME: await $.env.get('HOME'),
+    CLAUDE_CODE_TASK_LIST_ID: await $.env.get('CLAUDE_CODE_TASK_LIST_ID'),
+  }
+  const where = taskDirOf(env, sessionId)
+  if ('why' in where) return { items: [], more: 0, source: `n/a (${where.why})`, problems: [`tasks: ${where.why}`] }
+  const dir = where.dir
+  // a list that was never started has no directory: that is no task, not a problem
+  if (!(await $.fs.exists(dir))) return { items: [], more: 0, source: `none (no directory at ${dir})`, problems: [] }
+  const entries = (await $.fs.list(dir)).filter(en => en.kind === 'file')
+  const sizes = new Map(entries.map(en => [en.name, en.size] as const))
+  const { chosen, cut } = pickTaskFiles(entries.map(en => en.name))
+  const problems = cut > 0 ? [`tasks: ${chosen.length + cut} task files in the list, read the newest ${chosen.length}`] : []
+  const items: TaskItem[] = []
+  for (let i = 0; i < chosen.length; i += KEEP_BATCH) {
+    const batch = await Promise.all(
+      chosen.slice(i, i + KEEP_BATCH).map(async (name): Promise<{ name: string; got: TaskItem | TaskDrop }> => {
+        if ((sizes.get(name) ?? 0) > TASK_BYTES_MAX) return { name, got: { drop: 'is too large', problem: true } }
+        try {
+          return { name, got: parseTaskFile(await $.fs.read(`${dir}/${name}`)) }
+        } catch (err) {
+          return { name, got: { drop: `cannot be read (${why(err)})`, problem: true } }
+        }
+      }),
+    )
+    for (const { name, got } of batch) {
+      if (!('drop' in got)) items.push(got)
+      else if (got.problem) problems.push(`tasks: ${name} ${got.drop}`)
+    }
+  }
+  const open = tasksOf(items)
+  return { items: open.items, more: open.more, source: `${items.length} open of ${chosen.length} read in ${dir}`, problems }
+}
+
+/** The session's recorded outputs and handoffs that are still on disk; a check that is refused keeps the path (unknown is not absent). */
+const gatherRecorded = async ($: EngineInterface, sid: string): Promise<Recorded> => {
+  const kept = await read($, keptA)
+  const mine = kept.sid === sid && Array.isArray(kept.files) && Array.isArray(kept.handoffs) ? kept : { sid, files: [], handoffs: [] }
+  const handoffs = mine.handoffs.slice(0, HANDOFFS_MAX)
+  const files = mine.files.slice(0, FILES_LISTED)
+  const gone = new Set<string>()
+  await Promise.all(
+    [...new Set([...handoffs, ...files])].map(async path => {
+      try {
+        if (!(await $.fs.exists(path))) gone.add(path)
+      } catch {
+        // unknown is not absent: the path stays in
+      }
+    }),
+  )
+  const here = (list: string[]): string[] => list.filter(p => !gone.has(p))
+  const note = (recorded: number, list: string[]): string => `${recorded} recorded, ${here(list).length} listed${list.length > here(list).length ? `, ${list.length - here(list).length} gone` : ''}`
+  return {
+    files: here(files),
+    handoffs: here(handoffs),
+    gone: gone.size,
+    sources: { files: note(mine.files.length, files), handoffs: note(mine.handoffs.length, handoffs) },
+    problems: [],
+  }
+}
+
+/** The three sources of the keep-list, read at once; one that cannot be read is a line in `problems` and nothing else. Never throws. */
+const gatherKeep = async ($: EngineInterface, sessionId: string, sid: string): Promise<Gathered> => {
+  const [tasks, rec] = await Promise.all([
+    gatherTasks($, sessionId).catch((err: unknown): TaskRead => ({ items: [], more: 0, source: `n/a (${why(err)})`, problems: [`tasks: ${why(err)}`] })),
+    gatherRecorded($, sid).catch(
+      (err: unknown): Recorded => ({ files: [], handoffs: [], gone: 0, sources: { files: `n/a (${why(err)})`, handoffs: `n/a (${why(err)})` }, problems: [`files: ${why(err)}`] }),
+    ),
+  ])
+  return {
+    keep: buildKeep({ tasks: tasks.items, moreTasks: tasks.more, files: rec.files, handoffs: rec.handoffs }),
+    sources: { tasks: clip(tasks.source), files: clip(rec.sources.files), handoffs: clip(rec.sources.handoffs) },
+    problems: [...tasks.problems, ...rec.problems].slice(0, KEEP_PROBLEMS_MAX).map(p => clip(p)),
+    gone: rec.gone,
+  }
+}
+
+/** Reads the switches, decides, reads what the decision needs, records it, and answers with the plan. A throw here is "leave it as it came". */
+const keepWork = async ($: EngineInterface, e: CompactIn, isOpen: () => boolean): Promise<KeepPlan> => {
+  const cfg = keepConfig(await $.env.get('STATUS_PANE_KEEP'), await $.env.get('STATUS_PANE_KEEP_PRECOMPUTE'))
+  const told = typeof e.instructions === 'string' ? e.instructions : undefined
+  const base = { trigger: e.trigger, agentId: e.agentId, cfg, hasMark: told !== undefined && told.includes(KEEP_MARK) }
+  // asked as if there were something to keep, this says whether anything need be read: the bypass, a subagent,
+  // instructions that already carry the list and a trigger of the future all end here, silently
+  const first = decideCompact({ ...base, hasKeep: true })
+  if (first.action === 'pass' && first.would === null) return PASS
+  const snap = await read($, snapA)
+  if (snap && !snap.toggles.enabled) return PASS
+  const sessionId = await $.session.id()
+  const sid = sidOf(sessionId)
+  const got = first.action === 'rewrite' || first.would === 'rewrite' ? await gatherKeep($, sessionId, sid) : null
+  const d = got ? decideCompact({ ...base, hasKeep: got.keep !== null }) : first
+  const at = await $.clock.now()
+  // the deadline passed while the sources were being read: the compaction has gone on, and this writes nothing
+  if (!isOpen()) return PASS
+  const last: KeepLast = {
+    at,
+    trigger: e.trigger as KeepTrigger,
+    action: d.action,
+    why: d.why,
+    would: d.would,
+    counts: got?.keep?.counts ?? { tasks: 0, files: 0, handoffs: 0 },
+    dropped: got?.keep?.dropped ?? 0,
+    gone: got?.gone ?? 0,
+    chars: got?.keep?.text.length ?? 0,
+    text: got?.keep?.text ?? '',
+    sources: got?.sources ?? { tasks: 'not read', files: 'not read', handoffs: 'not read' },
+    problems: got?.problems ?? [],
+  }
+  await update($, keepA, prev => nextKeepState(prev, { sid, cfg, trigger: e.trigger as KeepTrigger, last }))
+  if (d.action === 'skip') return { kind: 'skip', reason: d.why }
+  if (d.action === 'rewrite' && got?.keep) return { kind: 'rewrite', instructions: withKeep(told, got.keep.text) }
+  return PASS
+}
+
+/** `keepWork` held to KEEP_DEADLINE_MS: a `$` call that never answers must not hold a compaction up. Never rejects. */
+const planKeep = ($: EngineInterface, e: CompactIn): Promise<KeepPlan> =>
+  new Promise<KeepPlan>(resolve => {
+    let open = true
+    let timer: Timer | null = null
+    const finish = (plan: KeepPlan): void => {
+      if (!open) return
+      open = false
+      timer?.cancel()
+      resolve(plan)
+    }
+    try {
+      timer = $.clock.after(KEEP_DEADLINE_MS, () => finish(PASS))
+    } catch {
+      // with no way to bound the wait the compaction goes on as it came
+      finish(PASS)
+      return
+    }
+    keepWork($, e, () => open).then(finish, () => finish(PASS))
+  })
+
+/** Records where a call that went through wrote, or which handoff it read, so a compaction can name them. Never throws. */
+const noteOutput = async ($: EngineInterface, e: { tool: string }): Promise<void> => {
+  try {
+    const path = callPath(e.tool, e as unknown as Record<string, unknown>)
+    // a call that adds nothing is known before any `$` call
+    if (recordPath(null, '', e.tool, path) === null) return
+    const sid = sidOf(await $.session.id())
+    await update($, keptA, prev => recordPath(prev, sid, e.tool, path) ?? prev)
+  } catch {
+    // the record keeps what it had
+  }
+}
+
 const noteEffort = async ($: EngineInterface, input: unknown): Promise<void> => {
   try {
     const level = effortFrom(input)
@@ -398,6 +586,10 @@ export const register: Register = on => {
     await $.command
       .register({ name: 'progress', description: 'Show the current tool and how long it has run', immediate: true })
       .catch(() => undefined)
+    // immediate: a record of the last compaction, read from state only
+    await $.command
+      .register({ name: 'keeplist', description: 'Show what the compaction keep-list holds and would send', immediate: true })
+      .catch(() => undefined)
     void noteIdle($, run)
     void $.ui.open({ id: PANE, title: 'Status' }).catch(() => undefined)
     try {
@@ -429,6 +621,17 @@ export const register: Register = on => {
     }
   })
 
+  on('command.run', { command: 'keeplist' }, async $ => {
+    try {
+      const cfg = keepConfig(await $.env.get('STATUS_PANE_KEEP'), await $.env.get('STATUS_PANE_KEEP_PRECOMPUTE'))
+      const sid = sidOf(await $.session.id())
+      const state = await read($, keepA)
+      return { text: keepReport(state !== null && state.sid === sid ? state : null, cfg) }
+    } catch (err) {
+      return { text: `keeplist n/a (${why(err)})` }
+    }
+  })
+
   on('classic.PostToolUse', async ($, e, next) => {
     await noteEffort($, e)
     return next(e)
@@ -451,6 +654,7 @@ export const register: Register = on => {
     }
     const r = ran as { deny?: unknown; isError?: unknown } | null | undefined
     if (at !== null && r?.deny === undefined && r?.isError !== true) await noteBgStart($, bgStartOf(e, ran, at))
+    if (r?.deny === undefined && r?.isError !== true) await noteOutput($, e)
     try {
       const n = patchLineCount(ran)
       if (n.add > 0 || n.rm > 0) {
@@ -494,6 +698,13 @@ export const register: Register = on => {
   on('session.measure', async ($, e, next) => {
     await noteMeasure($, run, e)
     return next(e)
+  })
+
+  // the person's /compact text, the engine's threshold and another plugin's call all pass here; `next` is called once, or never on a skip
+  on('session.compact', async ($, e, next) => {
+    const plan = await planKeep($, e)
+    if (plan.kind === 'skip') return { skip: plan.reason }
+    return plan.kind === 'rewrite' ? next({ ...e, instructions: plan.instructions }) : next(e)
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {

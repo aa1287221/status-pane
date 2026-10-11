@@ -109,8 +109,22 @@ export const tasksOf = (items: readonly TaskItem[]): { items: TaskItem[]; more: 
   return { items: open.slice(0, TASKS_MAX), more: Math.max(0, open.length - TASKS_MAX) }
 }
 
-/** STUB of #31: the picker's final name and type with a wrong answer. */
-export const pickTaskFiles = (_names: readonly string[]): { chosen: string[]; cut: number } => ({ chosen: [], cut: 0 })
+const TASK_FILE = /^[A-Za-z0-9_-]+\.json$/
+
+/** Newest ids first: numbers by value (10 before 9), a name that is not a number after them. */
+const byIdNewest = (a: string, b: string): number => {
+  const an = NUMERIC.test(a)
+  const bn = NUMERIC.test(b)
+  if (an !== bn) return an ? -1 : 1
+  const d = an ? Number(b) - Number(a) : 0
+  return d !== 0 ? d : a < b ? 1 : a > b ? -1 : 0
+}
+
+/** The task files of a listing worth reading: `<id>.json` only (the engine's own spelling), the newest ids first, TASK_FILES_MAX at most. */
+export const pickTaskFiles = (names: readonly string[]): { chosen: string[]; cut: number } => {
+  const files = names.filter(n => TASK_FILE.test(n)).sort((x, y) => byIdNewest(x.slice(0, -5), y.slice(0, -5)))
+  return { chosen: files.slice(0, TASK_FILES_MAX), cut: Math.max(0, files.length - TASK_FILES_MAX) }
+}
 
 /** The path a tool call names: `file_path` for Write, Edit and Read, `notebook_path` for NotebookEdit; nothing for another tool. */
 export const callPath = (tool: string, input: Record<string, unknown>): unknown => {
