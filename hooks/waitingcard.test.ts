@@ -116,6 +116,12 @@ describe('the WAITING card: title and rows', () => {
     expect(card.body.join('\n')).toContain('hostb n/a（檔案損毀或被截斷）')
   })
 
+  test('nothing readable: 沒有登記 is never drawn beside an unreadable host', () => {
+    const card = waitingOf(makeSnap({ waiting: board([], [{ host: 'hosta', text: 'n/a（缺檔）' }]) }), 89)
+    expect(card.body.join('\n')).not.toContain('沒有登記')
+    expect(card.value).toBe('—')
+  })
+
   test('more than 8 items: 8 drawn, then +N more; the title counts them all', () => {
     const items = Array.from({ length: 10 }, (_, i) => item({ id: `hosta-aaaa00${String(i).padStart(2, '0')}`, what: `item ${i}`, sinceSec: NEW_SINCE + i }))
     const card = waitingOf(snapOf(items), 89)
