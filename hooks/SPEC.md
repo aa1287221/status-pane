@@ -776,7 +776,7 @@ Card     Box width round gray paddingX=1 column               (Section: Box widt
   5. `/cost` again: unchanged apart from that turn's own cost (no model call for `/progress`). Watch the pane for flicker at the 2 s repaint; this also measures the extra `$` calls and state writes per tool call once.
   6. BG (#16, branch `t16-inflight-row`): prompt `run Bash in the background: sleep 120`, wait for the turn to end, then `/progress`. PASS: `BG   shell <n>s` with `snapshot` under it and the `PERM n/a（...）` line; when the shell ends the notification row hides it. Also try a `CronCreate` and, if it can be arranged, a workflow or monitor: those were never stimulated, record what `BG` shows on #16.
   7. `git -C ~/.claude/plugins/status-pane checkout main`.
-- Manual TUI check for #30 (owner or main session; an agent cannot do it; #9 item (b)): start a TUI session
+- Manual TUI check for #30 (owner only: the grey text shows in a live TUI, and `-p` has no input box; #9 item (b)): start a TUI session
   with `STATUS_PANE_CTX_SUGGEST=1 STATUS_PANE_CTX_AT=1`, run one short turn, leave the box empty and idle.
   PASS: after the turn the box shows the grey `/compact focus on ...`, Tab takes it into the box, and the card's
   `suggest` line reads `on · shown`. `on · not shown` or no grey text: record the result on #30 and #9/#31; the
