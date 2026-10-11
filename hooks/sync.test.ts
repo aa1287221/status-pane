@@ -2,10 +2,11 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { EXPECTED_TEXT, FILES, HUB_COMMIT, REF_NOW_MS } from './sync.fixtures'
 import { boot, cardOf, hintText, makeSnap, mountPane } from './fixture'
-import { parseTogglesStrict, tailText } from './model'
+import { dw, parseTogglesStrict, tailText } from './model'
 import { layoutTree, paneLayout } from './pane'
-import { FAKE_ELS, findOverflow, paneParts, renderTree } from './tree'
-import type { Node } from './tree'
+import type { Snap, SyncData } from './state'
+import { FAKE_ELS, cardTitled, findOverflow, paneParts, renderTree } from './tree'
+import type { CardView, Node } from './tree'
 import { syncHead, syncHint, syncOf } from './sync'
 import { KINDS, readSideFile } from './sidefile'
 import type { SideIo, SideResult } from './sidefile'
@@ -216,6 +217,83 @@ const okOfData = () => ({
   branch: 'sync-data-v2', upstream: 'origin/sync-data-v2', ahead: 0, behind: 3,
   lastPushSec: Date.parse('2026-10-10T11:00:00Z') / 1000, lastFetchSec: Date.parse('2026-10-10T11:50:00Z') / 1000,
   observedAtSec: Date.parse('2026-10-10T11:59:30Z') / 1000,
+})
+
+// ---- every width ----
+
+describe('sync-status: the card at every width from 22 to 122', () => {
+  // 22 columns is the narrowest pane the layout draws (MIN_W + 2); the tests above look at 36, 49 and 89 only
+  const FIRST = 22
+  const LAST = 122
+  const LABELS = ['ahead', 'behind', 'last push', 'fetched', 'age', 'observed']
+  const LABEL_ROW = /^(ahead|behind|last push|fetched|age|observed)(?= |$)/
+  const stamp = (iso: string) => Date.parse(iso) / 1000
+
+  const drawn = (snap: Snap, columns: number) => {
+    const tree = layoutTree(paneLayout(snap, { columns, nowMs: REF_NOW_MS, tzMin: 0, raster: true, cpuHist: [] }), FAKE_ELS) as unknown as Node
+    return { tree, parts: paneParts(tree, columns) }
+  }
+
+  /** What holds at one width whatever the card says: nothing in the pane passes its room, every frame is whole, the SYNC card spans the pane. Returns that card. */
+  const holds = (snap: Snap, columns: number, at: string): CardView => {
+    const { tree, parts } = drawn(snap, columns)
+    expect(findOverflow(tree, columns), at).toEqual([])
+    expect(Math.max(...renderTree(tree, columns).map(dw)), at).toBeLessThanOrEqual(columns - 2)
+    for (const c of parts.cards) {
+      const name = c.title || 'header'
+      expect(c.raw[0], `${at}: top of ${name}`).toMatch(/^╭─+╮$/)
+      expect(c.raw.at(-1), `${at}: bottom of ${name}`).toMatch(/^╰─+╯$/)
+      expect(c.raw.every(l => dw(l) === c.width), `${at}: a line of ${name} is not ${c.width} cells`).toBe(true)
+    }
+    // not cardOf: it answers a card of nothing when there is none, and a sweep of nothing is green
+    const card = cardTitled(parts, 'SYNC')
+    expect(card, `${at}: no SYNC card`).toBeDefined()
+    expect(card!.width, `${at}: the SYNC card spans the pane`).toBe(columns - 2)
+    return card!
+  }
+
+  // four digits is the widest headline that leaves the title room at 22 columns (4 + 1 + 11 of 16 cells)
+  const OK: [string, SyncData, string][] = [
+    ['behind 3, pushed and fetched', okOfData(), '-3 PULL'],
+    ['ahead 2, stamps months old', { ...okOfData(), ahead: 2, behind: 0, lastPushSec: stamp('2026-01-01T00:00:00Z'), lastFetchSec: stamp('2026-06-01T00:00:00Z') }, '+2 PUSH'],
+    ['diverged, four-digit counts', { ...okOfData(), ahead: 1234, behind: 5678 }, '+1234 -5678'],
+    ['in sync, never pushed or fetched', { ...okOfData(), ahead: 0, behind: 0, lastPushSec: null, lastFetchSec: null }, '✓'],
+  ]
+  for (const [name, v, head] of OK) {
+    test(`${name}: nothing passes its room, every frame is whole, the headline and the six rows are there`, () => {
+      for (let columns = FIRST; columns <= LAST; columns++) {
+        const at = `${name} at bodyColumns ${columns}`
+        const card = holds(makeSnap({ sync: { ok: true, v } }), columns, at)
+        expect(card.value, at).toBe(head)
+        expect(card.body.flatMap(l => LABEL_ROW.exec(l)?.[1] ?? []), at).toEqual(LABELS)
+      }
+    })
+  }
+
+  /** What the card says when the reader turns a producer file away. */
+  const whyOf = async (file: string): Promise<string> => {
+    const res = syncOf(await read(file), NOW_SEC)
+    if (res.ok) throw new Error(`${file} was expected to be n/a`)
+    return res.why
+  }
+  // the last two reasons are wider than the widest card here (116 cells inside), so they wrap at every width
+  const NA: [string, () => Promise<string>][] = [
+    ['no producer file', () => whyOf('sync-status.absent.json')],
+    ['the producer timed out', () => whyOf('sync-status.failed-timeout.json')],
+    ['one word wider than the card', async () => `n/a（收集失敗：${'x'.repeat(190)}，從未成功）`],
+    ['wide characters only', async () => `n/a（格式錯誤：data.${'目錄'.repeat(30)}）`],
+  ]
+  for (const [name, reason] of NA) {
+    test(`n/a, ${name}: nothing passes its room, every frame is whole, the reason is read to its end`, async () => {
+      const why = await reason()
+      for (let columns = FIRST; columns <= LAST; columns++) {
+        const at = `n/a ${name} at bodyColumns ${columns}`
+        const card = holds(makeSnap({ sync: { ok: false, why } }), columns, at)
+        expect(card.value, at).toBe('')
+        expect(card.body.join('').replace(/\s/g, ''), at).toBe(why.replace(/\s/g, ''))
+      }
+    })
+  }
 })
 
 // ---- the hub chain: producer bytes -> reader -> card (E2E-01/02) ----
