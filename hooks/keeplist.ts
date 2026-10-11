@@ -36,10 +36,8 @@ export const keepConfig = (modeRaw: string | undefined, precomputeRaw: string | 
   precompute: precomputeRaw === 'rewrite' ? 'rewrite' : 'skip',
 })
 
-// Code points that draw nothing or move the line: controls (C0, DEL, C1), the soft hyphen, bidi marks, embeddings and
-// isolates, line and paragraph separators, zero-width and invisible operators, the BOM, annotation anchors, and the
-// tag and variation-selector planes that can carry text no one sees. The joiners (U+200C, U+200D) stay: emoji and
-// several scripts need them.
+// Code points that draw nothing or move the line: controls, bidi, line and paragraph separators, zero-width, the BOM,
+// and the tag and variation planes that can hide text. The joiners U+200C and U+200D stay: emoji and some scripts need them.
 const HIDDEN: readonly (readonly [number, number])[] = [
   [0x00, 0x1f], [0x7f, 0x9f], [0xad, 0xad], [0x61c, 0x61c], [0x180e, 0x180e], [0x200b, 0x200b], [0x200e, 0x200f],
   [0x2028, 0x202e], [0x2060, 0x2064], [0x2066, 0x206f], [0xfeff, 0xfeff], [0xfff9, 0xfffb], [0xe0000, 0xe007f], [0xe0100, 0xe01ef],
@@ -147,9 +145,8 @@ const pathOk = (path: unknown): path is string => {
 const baseName = (path: string): string => path.slice(Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1)
 
 /**
- * What a tool call that went through adds to the session's record: Write, Edit and NotebookEdit add their path
- * to the files, a handoff-<name>.md also to the handoffs, and a Read of one only to the handoffs. null when the
- * call adds nothing. Newest first, once each; another session id starts over.
+ * What a call that went through adds: Write, Edit and NotebookEdit add the path, a handoff-<name>.md also to the handoffs (a Read: only there).
+ * null when it adds nothing; newest first, once each; another session id starts over.
  */
 export const recordPath = (prev: KeptFiles | null, sid: string, tool: string, path: unknown): KeptFiles | null => {
   const writes = tool === 'Write' || tool === 'Edit' || tool === 'NotebookEdit'
@@ -229,9 +226,8 @@ const trimSlashes = (p: string): string => p.replace(/\/+$/, '')
 const OUTSIDE_NAME = /[^A-Za-z0-9_-]/g
 
 /**
- * Where the engine keeps the session's task files (read from the 2.1.296 bundle): `<config dir>/tasks/<list id>`, the list id
- * being CLAUDE_CODE_TASK_LIST_ID, else the session id with its dashes, every character outside [A-Za-z0-9_-] a dash.
- * A team's or a resumed list's id is not visible to a plugin.
+ * Where the engine keeps the session's task files (read from the 2.1.296 bundle): `<config dir>/tasks/<list id>`, the id being
+ * CLAUDE_CODE_TASK_LIST_ID, else the session id with its dashes, every character outside [A-Za-z0-9_-] a dash. A team's list is not visible here.
  */
 export const taskDirOf = (env: TaskEnv, sessionId: string): { dir: string } | { why: string } => {
   const base = env.CLAUDE_CONFIG_DIR ? trimSlashes(env.CLAUDE_CONFIG_DIR) : env.HOME ? `${trimSlashes(env.HOME)}/.claude` : ''

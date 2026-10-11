@@ -38,6 +38,7 @@ Claude Code 的 function-hooks mod，用來取代原生的 `statusLine`（cc-sta
 - `/progress`：回合進行中也立即印出目前的工具與經過時間，以及背景工作（來源是上一次回合結束的快照）（和 PROGRESS 卡同一份資料，不經模型）；資料缺失時印 `n/a（原因）`。
 - `~/.claude/cc-statusline-rows.json` 可以逐列關閉；設成 `"enabled": false` 會整個停用，什麼都不收集、不寫入。
 - CONTEXT 卡永遠顯示 `/compact` 門檻提示：用量未達時是一行淡色的 `達 60% 建議 /compact`，達到門檻（預設 60%，`STATUS_PANE_CTX_AT`，1–99）起轉成警示色。門檻取自引擎實際 auto-compact 的視窗，不是模型的完整視窗：依序是環境變數 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`、settings 的 `modelSettings.<模型>.autoCompactWindow`、`autoCompactWindow`，都沒設才用模型的視窗；視窗比模型小時，提示會多帶門檻的 token 數，例如 `(240.0K)`。預設 observe：只計算與顯示，不碰輸入框；`STATUS_PANE_CTX_SUGGEST=1` 才會把 `/compact …` 預填進輸入框（不自動執行），`=0` 停用建議、保留提示。
+- 壓縮保留清單（`session.compact` hook）：壓縮時把這個 session 還沒做完的 task、寫過或改過的檔案、讀過或寫過的 `handoff-*.md` 的路徑，附加在給摘要模型的指示後面（先放你自己打的 `/compact` 文字，空一行，再放清單；auto 壓縮沒有你的文字，就只有清單）。預設 observe：只計算並記錄「會附加什麼」，引擎收到的東西一個字都不改；`STATUS_PANE_KEEP=1` 才會真的附加，`=0` 完全旁路（不讀檔、不寫 state）。precompute（提前算好、留給下一次壓縮用的摘要）預設回 `{ skip }`，因為那份摘要會凍結清單；`STATUS_PANE_KEEP_PRECOMPUTE=rewrite` 改成照常附加（代價是清單可能過時）。只處理主對話；任何錯誤或 4 秒內沒結果，一律照原樣壓縮。CONTEXT 卡在提示下多一列 `keep`，`/keeplist`（只讀 state，不經模型、不讀檔）印出開關、最近一次壓縮的各來源與完整文字。
 - 加上 `"fixture": true`（只認布林 true，`1`、`"yes"` 不算）會多出一張 FIXTURE 卡，讀 `$TMPDIR/claude-side/fixture.json`（side file 契約的示範，預設關閉）；檔案缺少、過期或損毀時，卡片顯示 `n/a（原因）`。
 
 ## 開發
