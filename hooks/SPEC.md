@@ -24,7 +24,7 @@ No `AbovePrompt` band: tw-stock-mod already answers that site without calling `n
                                patch line count; formatters; staleness; sid; the progress view (`progressOf`, `progressText`) and the in-flight view (`inflightOf`)
   hooks/pane.ts                pure view: snapshot -> `Layout` (cards as plain data) -> engine elements
                                (`paneLayout`, `layoutTree`); gauge and chart Raster encoders; text fitting
-  hooks/dispatch.ts            pure: the in-flight count from the agents tracker (`dispatchOf`); limit 6, stale cutoff 30 min
+  hooks/dispatch.ts            pure: the in-flight count from the agents tracker (`dispatchOf`) and the optional threshold from STATUS_PANE_INFLIGHT_WARN (`parseInflightWarn`); stale cutoff 30 min
   hooks/state.d.ts             $.state contract and the snapshot types (a hooks/-located contract is accepted)
   hooks/sidefile.ts            pure reader of the side file contract (hub SCHEMA.md v1): bytes + clock in, a verdict out; `SideIo` is its seam
   hooks/sidefile.fixtures.ts   test-only: embedded copies of the hub's hand-written fixtures (hub commit 6098494)
@@ -188,17 +188,23 @@ Stop it reads `BG n/a（還沒有回合結束的快照）`.
   names is the id the Stop lists (source only, never observed); a task that starts and ends inside one turn never
   appears (it is in no snapshot).
 
-### Dispatch count (in-flight N/6, #32)
+### Dispatch count (in-flight, #32)
 
-ACTIVITY's first row counts this session's subagents still running against the limit of 6. Its source is the
-agents tracker file, the one the agents row reads (one read, both rows). A `running` entry started within
-30 min (`DISPATCH_STALE_MS`, inclusive) counts; an older or undated one is shown as `N stale`, never hidden,
-because the tracker never prunes `running` (a missed SubagentStop leaves one forever). Yellow at 6; past 6 the
-value is red bold `N/6 over`, a display state only: no hook, no deny, no toast. Scope: this session's file,
-while the 429 limit is account-wide, so the number is a per-session lower bound. The group row (`○×N`) still
-counts stale entries, so on a dirty file the two can disagree; that is the agents row's own parity, left alone.
-Refresh rides the 30 s tick and `turn.complete`. An unreadable file reads `in-flight n/a (...)` and counts one
-error (the agents row counts it, the dispatch row does not add a second). Tail: no in-flight segment.
+ACTIVITY's first row counts this session's subagents still running. Its source is the agents tracker file, the one
+the agents row reads (one read, both rows). A `running` entry started within 30 min (`DISPATCH_STALE_MS`, inclusive)
+counts; an older or undated one is shown as `N stale`, never hidden, because the tracker never prunes `running` (a
+missed SubagentStop leaves one forever). There is no fixed limit: the row shows the plain count. The optional
+threshold is the environment variable `STATUS_PANE_INFLIGHT_WARN` (`$.env.get`, read on every refresh while the
+agents row is on): a positive safe integer turns the warning on, and a count above it reads `N over T` in red bold.
+It is a display state only: no hook, no deny, no toast. Unset, empty, zero, negative, non-integer (`+3`, `2.5`, `1e3`)
+or past the safe integer range is no warning (`parseInflightWarn`); a refused read is no warning too; a count equal
+to the threshold is plain. Scope: this session's file, while the 429 limit is account-wide, so the number is a
+per-session lower bound. The group row (`○×N`) still counts stale entries, so on a dirty file the two can disagree;
+that is the agents row's own parity, left alone. Refresh rides the 30 s tick and `turn.complete`. A missing file
+reads `in-flight n/a（agents file missing）`: the tracker writes only on the first SubagentStart, so a fresh session
+reads n/a until a subagent has run. An unreadable file reads `in-flight n/a（agents file unreadable）`. Both count
+one error, as any n/a does (the agents row counts a failed read, the dispatch row does not add a second). Tail: no
+in-flight segment.
 
 ## Dependencies
 
@@ -725,7 +731,7 @@ Card     Box width round gray paddingX=1 column               (Section: Box widt
 | 60 | the in-flight view | oldest first at the draw clock, three and a count, `ageSec` of the snapshot; empty list is `none`, not n/a; n/a for read failure, session id failure, no snapshot (also starts only) and another session's record |
 | 61 | BG and PERM at the three layouts | bodyColumns 36 / 49 / 89: NOW, `BG` rows, `+N more`, `snapshot` row, then the PERM n/a read in full; none; every n/a keeps its frame; a long label loses its tail, the wait stays; nothing overflows; without `view.progress.inflight` the card is the NOW band alone; `/progress` lines are the card's rows |
 | 62 | in-flight through the engine | a fresh session reads BG n/a; a background `Bash` call then a Stop shows the wait from the call at 36 / 49 / 89 and in `/progress`; the notification row hides it; crons and wakeups; a subagent's Stop and a Stop with neither field change nothing; `turn.complete` does not clear; a non-notification message or another id ends nothing; the three sequences of the #16 review, each without ids (a lower bound `≥`) and with them (the wait of the listed task's own call): a main shell that ended beside a shell a subagent started, a fired `ScheduleWakeup` beside a subagent's `CronCreate`, a flagged `Agent` that ended beside one without the flag; a shell moved to the background by hand is dated by its `backgroundTaskId`; `ScheduleWakeup` with `stop: true` leaves no start and one without it dates its cron; a task listed while its subagent call was still returning is dated by the key at the next Stop; 63 keyed starts after a veto push the veto out, and `dropped` stops the count rule; hidden ids: the 65th hides nothing and exactly one row is left, a notification of another session starts the set over; mutations, each turning a named test red: the notification hook, the `agent_id` guard, `noteBgStart`, the count rule, the other-session check, a keyed match without the kind check (fresh and late-key paths), `dropped` ignored, the veto check removed, keyed starts in the pool, `stop: true` counted as a start, the late key removed, `status` not checked, a subagent call as an unkeyed start, an `Agent` without the flag as nothing, monitor / workflow / other mapped to the shell kind, labels cut with `slice`, the hidden ids not cleared for another session, the hidden-id cap at 63 |
-| 63 | dispatch count | `dispatchOf`: a missing file is 0 of 6; running within 30 min counts and the boundary is inclusive; older or undated running entries are stale; other statuses count nowhere; an unreadable file is n/a; the row is yellow at 6 and red `over` past it; through the engine it follows the 30 s tick; a failed read counts one error |
+| 63 | dispatch count | `dispatchOf`: a missing file is n/a（agents file missing）; running within 30 min counts and the boundary is inclusive; older or undated running entries are stale; other statuses count nowhere; an unreadable file is n/a（agents file unreadable）; no fixed limit: the plain count, and `N over T` in red bold only past a threshold, where `parseInflightWarn` takes a positive safe integer and anything else (unset, empty, zero, negative, `+3`, `2.5`, `1e3`, untrimmed junk, out of range) is no warning; a count equal to the threshold is plain; the engine reads STATUS_PANE_INFLIGHT_WARN each refresh and a refused read is no warning; through the engine it follows the 30 s tick; a missing or failed read counts one error; mutations, each turning a named test red: the missing file as 0, the unreadable file as 0, the `>=` boundary, the `+` / float / trim / safe-integer checks, the ASCII parens, the threshold not passed to `dispatchOf` |
 
 ## Acceptance
 

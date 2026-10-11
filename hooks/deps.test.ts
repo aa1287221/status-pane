@@ -79,9 +79,9 @@ describe('dependencies: a data source that is missing reads n/a, never idle', ()
   test('subagent-tracker.js missing: the agents part of ACTIVITY says so and counts one error, nothing else changes', async ($, on) => {
     await boot($, on, w => unwire(w, 'subagent-tracker.js'))
     expectOnlyCard(await paneView($), 'ACTIVITY', [
-      'in-flight n/a',
-      '(subagent-tracker.js',
-      'hook not configured)',
+      'in-flight',
+      'n/a（subagent-tracker.js',
+      'hook not configured）',
       'agents n/a',
       '(subagent-tracker.js',
       'hook not configured)',
@@ -94,7 +94,7 @@ describe('dependencies: a data source that is missing reads n/a, never idle', ()
   test('file-tracker.js missing: the edited part of ACTIVITY says so and counts one error, nothing else changes', async ($, on) => {
     await boot($, on, w => unwire(w, 'file-tracker.js'))
     expectOnlyCard(await paneView($), 'ACTIVITY', [
-      pair('in-flight', '0/6 · 1 stale', 24),
+      pair('in-flight', '0 · 1 stale', 24),
       pair('agents', 'general-purp ○', 24),
       right('Explore ✓×2', 24),
       right('5m ago', 24),
@@ -148,9 +148,9 @@ describe('dependencies: a data source that is missing reads n/a, never idle', ()
     const parts = await paneView($)
     expect(cardOf(parts, 'SYSTEM').body).toEqual(systemNoMcp(3))
     expect(cardOf(parts, 'ACTIVITY').body).toEqual([
-      'in-flight n/a',
-      '(subagent-tracker.js',
-      'hook not configured)',
+      'in-flight',
+      'n/a（subagent-tracker.js',
+      'hook not configured）',
       'agents n/a',
       '(subagent-tracker.js',
       'hook not configured)',
@@ -164,8 +164,8 @@ describe('dependencies: a data source that is missing reads n/a, never idle', ()
     await boot($, on, w => unwire(w, 'subagent-tracker.js', 'file-tracker.js'))
     const parts = await paneView($, 49)
     expect(cardOf(parts, 'ACTIVITY').body).toEqual([
-      'in-flight n/a (subagent-tracker.js hook not',
-      'configured)',
+      'in-flight n/a（subagent-tracker.js hook not',
+      'configured）',
       'agents n/a (subagent-tracker.js hook not',
       'configured)',
       'edited n/a (file-tracker.js hook not',

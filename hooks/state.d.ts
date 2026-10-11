@@ -4,8 +4,8 @@
 /** One collector's outcome: its value, or a short reason the row reads `n/a (...)`. */
 export type Res<T> = { ok: true; v: T } | { ok: false; why: string }
 
-/** The in-flight count of this session's subagents (`dispatchOf` in dispatch.ts). */
-export type Dispatch = { running: number; stale: number; limit: number }
+/** The in-flight count of this session's subagents (`dispatchOf` in dispatch.ts); `warn` is STATUS_PANE_INFLIGHT_WARN, null for none. */
+export type Dispatch = { running: number; stale: number; warn: number | null }
 
 export type RowKey =
   | 'summary'

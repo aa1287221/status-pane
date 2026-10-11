@@ -33,7 +33,7 @@ import {
   step,
   why,
 } from './model'
-import { dispatchOf } from './dispatch'
+import { dispatchOf, parseInflightWarn } from './dispatch'
 import { fixtureOf, naReason, readSideKind } from './sidefile'
 import type { Cum, RlField, RlSnap, RlSnaps, RlWindow } from './model'
 import type { CpuSample, GitCounts, GitInfo, HookVerdicts, QuotaWindow, Res, Snap, Toggles } from './state'
@@ -49,6 +49,7 @@ export type Io = {
   home: () => Promise<string | undefined>
   tmpdir: () => Promise<string | undefined>
   effortEnv: () => Promise<string | undefined>
+  inflightWarn: () => Promise<string | undefined>
   settings: (source?: SettingsSource) => Promise<Settings>
   exists: (path: string) => Promise<boolean>
   read: (path: string) => Promise<string>
@@ -464,6 +465,8 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
     return guard(io, fn, ms)
   }
 
+  // read only with the agents row on; a refused read is no threshold, so the count is shown plain
+  const warn = on.agents ? parseInflightWarn(await io.inflightWarn().catch(() => undefined)) : null
   const [summary, dir, git, model, agentsRes, compacts, cumRes, quota, cpuRes, ramRes, memory, mcp, edited, side] =
     await Promise.all([
       row(on.summary, [base, summaryWired], () => collectSummary(io, b!)),
@@ -530,7 +533,7 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
   // the reader's own text is the reason (never cut to a short one); absent when the row is off
   if (on.fixture) snap.fixture = side.ok ? fixtureOf(side.v) : { ok: false, why: naReason(side.why) }
   // one read of the tracker feeds both rows; a failure reads the same reason in both
-  if (on.agents) snap.dispatch = agentsRes.ok ? dispatchOf(agentsRes.v.text, input.now) : agentsRes
+  if (on.agents) snap.dispatch = agentsRes.ok ? dispatchOf(agentsRes.v.text, input.now, warn) : agentsRes
   // a failure behind a row that is switched off is nothing to report; git counts when its status failed
   const shown: [Res<unknown>, boolean][] = [
     [snap.summary, on.summary],
