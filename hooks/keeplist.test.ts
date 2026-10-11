@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
-import type { Engine, On } from 'claude-code/testing'
+import type { Engine } from 'claude-code/testing'
+import type { On } from 'claude-code'
 
 import { COMPACT_TEXT } from './compact'
 import { SESSION_ID, SID, boot, cardOf, makeSnap, paneView, stallNext } from './fixture'
