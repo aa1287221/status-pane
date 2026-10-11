@@ -277,7 +277,7 @@ const iso = (sec: number) => new Date(sec * 1000).toISOString()
 /** The rows file text with the SYNC row pinned off; the row is on by default, so tests about other rows pin it. */
 export const pinSyncOff = (rows: string): string => JSON.stringify({ ...JSON.parse(rows), sync: false })
 
-/** A healthy session: every row of the SPEC mockup has data, nothing is on disk that should not be. */
+/** A healthy session: every row of the SPEC mockup has data and no side file is on disk. Its rows file holds only `"sync": false`, which keeps the on-by-default SYNC card out. */
 export const makeWorld = (): World => {
   const files = new Map<string, string>()
   const put = (path: string, text: string) => files.set(path, text)
