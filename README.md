@@ -37,7 +37,7 @@ Claude Code 的 function-hooks mod，用來取代原生的 `statusLine`（cc-sta
 - 手動打開或叫回來，輸入 `/status-pane`。
 - `/progress`：回合進行中也立即印出目前的工具與經過時間，以及背景工作（來源是上一次回合結束的快照）（和 PROGRESS 卡同一份資料，不經模型）；資料缺失時印 `n/a（原因）`。
 - `~/.claude/cc-statusline-rows.json` 可以逐列關閉；設成 `"enabled": false` 會整個停用，什麼都不收集、不寫入。
-- CONTEXT 卡永遠顯示 `/compact` 門檻提示：用量未達時是一行淡色的 `達 60% 建議 /compact`，達到門檻（預設 60%，`STATUS_PANE_CTX_AT`，1–99）起轉成警示色。門檻取自引擎實際 auto-compact 的視窗，不是模型的完整視窗：依序是環境變數 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`、settings 的 `modelSettings.<模型>.autoCompactWindow`、`autoCompactWindow`，都沒設才用模型的視窗；視窗比模型小時，提示會多帶門檻的 token 數，例如 `(240.0K)`。預設 observe：只計算與顯示，不碰輸入框；`STATUS_PANE_CTX_SUGGEST=1` 才會把 `/compact …` 預填進輸入框（不自動執行），`=0` 停用建議、保留提示。
+- CONTEXT 卡永遠顯示 `/compact` 門檻提示（取不到用量時只顯示原因）：用量未達時是淡色的 `達 60% 建議 /compact`（卡片太窄時會換行），達到門檻（預設 60%，`STATUS_PANE_CTX_AT`，1–99）起轉成警示色。門檻取自引擎實際 auto-compact 的視窗，不是模型的完整視窗：依序是環境變數 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`、settings 的 `modelSettings.<模型>.autoCompactWindow`、`autoCompactWindow`，都沒設才用模型的視窗；視窗比模型小時，提示會多帶門檻的 token 數，例如 `(240.0K)`。預設 observe：只計算與顯示，不碰輸入框；`STATUS_PANE_CTX_SUGGEST=1` 才會把 `/compact …` 預填進輸入框（不自動執行），`=0` 停用建議、保留提示。
 - 加上 `"fixture": true`（只認布林 true，`1`、`"yes"` 不算）會多出一張 FIXTURE 卡，讀 `$TMPDIR/claude-side/fixture.json`（side file 契約的示範，預設關閉）；檔案缺少、過期或損毀時，卡片顯示 `n/a（原因）`。
 
 ## 開發
