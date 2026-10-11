@@ -24,6 +24,7 @@ No `AbovePrompt` band: tw-stock-mod already answers that site without calling `n
                                patch line count; formatters; staleness; sid; the progress view (`progressOf`, `progressText`) and the in-flight view (`inflightOf`)
   hooks/pane.ts                pure view: snapshot -> `Layout` (cards as plain data) -> engine elements
                                (`paneLayout`, `layoutTree`); gauge and chart Raster encoders; text fitting
+  hooks/compact.ts             pure: the CONTEXT threshold hint and the /compact suggestion (fill, config, once per crossing, mode label)
   hooks/state.d.ts             $.state contract and the snapshot types (a hooks/-located contract is accepted)
   hooks/sidefile.ts            pure reader of the side file contract (hub SCHEMA.md v1): bytes + clock in, a verdict out; `SideIo` is its seam
   hooks/sidefile.fixtures.ts   test-only: embedded copies of the hub's hand-written fixtures (hub commit 6098494)
@@ -186,6 +187,34 @@ Stop it reads `BG n/a（還沒有回合結束的快照）`.
   here (never stimulated); whether a subagent's task is in the main loop's Stop list and whether the id a result
   names is the id the Stop lists (source only, never observed); a task that starts and ends inside one turn never
   appears (it is in no snapshot).
+
+### CONTEXT hint and /compact suggestion (#30)
+
+At or over a threshold the CONTEXT card gets a hint, and `session.measure` can pre-fill `/compact` in the
+box. Source levels (#9 correction applied):
+
+- **Fill** = `tokens / window`, from the `session.measure` payload (observed: `window` 1000000, `tokens` = the
+  last response's input + cache read + cache creation, #9). `percent` is never used: an integer by inference
+  only (one sample, value 0). The card computes the same ratio from `snap.context.v` (`used / max`).
+- **Threshold** 60%, inclusive (specified: the figure in `~/.claude/commands/壓縮建議.md`), i.e. 600K of 1M.
+  `STATUS_PANE_CTX_AT=<1..99>` (whole numbers only; anything else is 60).
+- **Trigger**: `session.measure` fires once per main-loop turn (observed, #9); acts only when `changed`
+  includes `context`. Usage is re-read per response (inferred only, #9 correction).
+- **Mode** from `STATUS_PANE_CTX_SUGGEST` (specified): unset or other = `observe` (computes, records
+  `last.would`, draws the card, calls nothing); `1` = `suggest` (`$.prompt.suggest({ text: COMPACT_TEXT })`
+  once per crossing, never run); `0` = `off` (the card hint stays). Read at every measure.
+- **Once per crossing**: fires when the fill rises over the line; a drop under it re-arms (what a /compact
+  does); a new session id starts over. An answer of `isShown: false`, or a refusal, re-arms too, so the
+  next measure tries again. One call in flight; a 3 s guard releases the flag if the box never settles.
+- **`isShown`** (partially-supported, #9): the call is accepted (observed, headless); whether the grey text
+  shows in a live TUI is NOT observed. The card prints it: `on · shown`, `on · not shown`, `on · pending`.
+- **Gates**: rows file `enabled:false`, the `usage` row off, or no snapshot: nothing is computed or written.
+  Every error inside the hook is swallowed; the hook returns `next(e)` untouched (fail-open).
+- **Unobserved**: the compaction window may be smaller than `window` (type file says so), so 60% of `window`
+  may come after the engine's own auto-compact point. Not solved here.
+
+The hint row is at or over the line only; below it the card is as before (path rows 30-7). The rows are
+`△ 已達 N% · 建議 /compact` in the fill's tone, then `suggest <mode>` when a state exists.
 
 ## Dependencies
 
@@ -698,6 +727,25 @@ Card     Box width round gray paddingX=1 column               (Section: Box widt
 | 46 | section 2 rules | every key required; label, kind, stamp, code, status shapes; consistency 1-3; `error.message` 1 to 200 code points and the control set (U+0000-001F, 007F-009F, 2028, 2029) with its neighbours accepted; unknown keys ignored; the first violation is the one named |
 | 47 | `schema_version` literal | `1.0`, `1e0`, `-0`, `0`, strings and bools are malformed, `2` is unsupported before any v1 rule; a decoy inside `data`, a duplicate key and an escaped key name are read as `JSON.parse` has them |
 | 48 | time | calendar, not `Date.parse` (leap and century years, month lengths, hour 24, year 0000 and 0001/9999); age equal to the TTL is fresh, a millisecond more is stale; 300 s ahead is age 0, 301 s is malformed; `data.final` only as boolean `true` and only for a kind with a final TTL; step 6 before step 7 |
+| 30-1 | fill is tokens / window | `{tokens 600000, window 1e6, percent 0}` gives 0.6; `percent` never decides, whichever way it disagrees |
+| 30-2 | unknown is not zero | tokens missing, 0, negative or NaN, window missing, 0, negative or Infinity: null, no advice, no suggest, no NaN in text |
+| 30-3 | threshold inclusive | 0.5999 no advice; 0.6 advice; 0.801 in the red tone (the gauge's boundaries) |
+| 30-4 | config parse | threshold: whole numbers 1..99, else 60; mode `1` suggest, `0` off, anything else observe; no throw |
+| 30-5 | once per crossing | fills 0.55, 0.60, 0.63, 0.70, 0.61, 0.55, 0.62 fire at 0.60 and 0.62 only; another session id starts over |
+| 30-6 | suggestion text | exactly the fixed `COMPACT_TEXT`: `/compact ` prefix, one line, at most 120 cells, no session data |
+| 30-7 | below the line | no hint row under 60%; the 830 existing layout tests stay green (guard) |
+| 30-8 | at the line | hint with `60%` and `/compact` at 36, 49 and 89 columns; under the used row; no new card |
+| 30-9 | mode line | observe, `on · shown`, `on · not shown`, `on · pending`, off; no line without a state |
+| 30-10 | fit | no overflow at 22 to 120 columns, 200K and 1M windows, with a long reason (22: the MIN_W clamp below it predates the card) |
+| 30-11 | engine: observe | default: no `prompt.suggest` call; `last.would` holds the text |
+| 30-12 | engine: suggest | one call with the fixed text; a repeat is silent; a compact then a new crossing sends again; `isShown` recorded |
+| 30-13 | engine: isShown false | recorded as false; the next measure tries again |
+| 30-14 | engine: refused suggest | the measure resolves; the reason is recorded |
+| 30-15 | engine: silent | a measure without `context` in `changed` writes no state and reads no env |
+| 30-16 | engine: bypass, master switch | env `0`: no call, mode off; rows file `enabled:false` or the `usage` row off: no state write, no call |
+| 30-17 | engine: burst | three measures at once: one call |
+| 30-18 | engine: fail-open | env read refused, then state write refused: both resolve, no call |
+| 30-19 | engine: other session | a state of another session is overwritten; its armed flag does not suppress (the other state is served by the fixture's `state.get`, not written beside it) |
 | 49 | reader never throws | refused or throwing `exists`/read, a non-bytes answer, a path or clock that is not valid, empty/blank/BOM, trailing content, NaN, a non-object, 60k-deep nesting, 64 KiB exactly vs one byte more (bytes, not characters), every kind of broken UTF-8, `__proto__` keys; a name outside the grammar or an unregistered kind is not opened |
 | 50 | locations and names | the grammar both ways, `local` and `synced` paths with the TMPDIR / CLAUDE_CONFIG_DIR fallbacks, a name part that would not parse back gives null, the host of a synced name equals `producer.host` |
 | 51 | FIXTURE card at the three layouts | bodyColumns 36 / 49 / 89 (1, 2, 3 across): a card across the whole width, `count`, `age`, `observed`, on every surface; every manifest case is the contract text with no count, age or clock rows and no overflow; a long reason is read to its end; the age follows the draw clock; off by default and switched off by the rows file: no card and the file is never read; a refused read is corrupt and the rest draws; TMPDIR honoured; one error when it fails, none when healthy; the master switch collects nothing |
@@ -728,6 +776,11 @@ Card     Box width round gray paddingX=1 column               (Section: Box widt
   5. `/cost` again: unchanged apart from that turn's own cost (no model call for `/progress`). Watch the pane for flicker at the 2 s repaint; this also measures the extra `$` calls and state writes per tool call once.
   6. BG (#16, branch `t16-inflight-row`): prompt `run Bash in the background: sleep 120`, wait for the turn to end, then `/progress`. PASS: `BG   shell <n>s` with `snapshot` under it and the `PERM n/a（...）` line; when the shell ends the notification row hides it. Also try a `CronCreate` and, if it can be arranged, a workflow or monitor: those were never stimulated, record what `BG` shows on #16.
   7. `git -C ~/.claude/plugins/status-pane checkout main`.
+- Manual TUI check for #30 (owner or main session; an agent cannot do it; #9 item (b)): start a TUI session
+  with `STATUS_PANE_CTX_SUGGEST=1 STATUS_PANE_CTX_AT=1`, run one short turn, leave the box empty and idle.
+  PASS: after the turn the box shows the grey `/compact focus on ...`, Tab takes it into the box, and the card's
+  `suggest` line reads `on · shown`. `on · not shown` or no grey text: record the result on #30 and #9/#31; the
+  feature stays hint-text-only and the default stays observe.
 - Live probe (main session): loaded through `CLAUDE_CODE_PLUGIN_DIRS`, with the real
   `statusline.js` beside it, the context %, 5h %, 7d % and session cost agree (tokens, duration
   and lines drift while both write the cum file: see above); pane and tail draw at 200 columns,
