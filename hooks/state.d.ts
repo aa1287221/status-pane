@@ -57,6 +57,15 @@ export type BgStart = { kind: 'shell' | 'subagent' | 'cron'; at: number; id?: st
 /** Background work for one session: the last Stop snapshot (`seenAt`, null until one arrives) and the starts since. `dropped` is set when the cap evicted a start since the last Stop. */
 export type InflightState = { sid: string; seenAt: number | null; items: BgItem[]; starts: BgStart[]; dropped?: true }
 
+/** The CONTEXT hint's state: the threshold and mode read at the last measure, and what the box answered (`isShown` null when not asked). */
+export type CompactState = {
+  sid: string
+  mode: 'observe' | 'suggest' | 'off'
+  atPct: number
+  armed: boolean
+  last: { at: number; isShown: boolean | null; why?: string; would?: string } | null
+}
+
 export type CpuSample = { idle: number; total: number }
 
 export type MemInfo = { usedKb: number; totalKb: number; pct: number }
@@ -106,6 +115,8 @@ declare module 'claude-code' {
       now: NowState | null
       /** Background tasks and schedules from the Stop snapshot; null until a hook has written it since the plugin loaded. */
       inflight: InflightState | null
+      /** The /compact suggestion for the context fill, written at each `session.measure` that moved context; null until one has. */
+      compact: CompactState | null
       /** When a refresh last failed to write its snapshot; writing it makes the pane read the clock again. */
       checkedAt: number
     }
