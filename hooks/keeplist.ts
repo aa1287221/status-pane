@@ -109,6 +109,9 @@ export const tasksOf = (items: readonly TaskItem[]): { items: TaskItem[]; more: 
   return { items: open.slice(0, TASKS_MAX), more: Math.max(0, open.length - TASKS_MAX) }
 }
 
+/** STUB of #31: the picker's final name and type with a wrong answer. */
+export const pickTaskFiles = (_names: readonly string[]): { chosen: string[]; cut: number } => ({ chosen: [], cut: 0 })
+
 /** The path a tool call names: `file_path` for Write, Edit and Read, `notebook_path` for NotebookEdit; nothing for another tool. */
 export const callPath = (tool: string, input: Record<string, unknown>): unknown => {
   if (typeof input !== 'object' || input === null) return undefined

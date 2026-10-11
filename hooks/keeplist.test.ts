@@ -13,6 +13,7 @@ import {
   keepReport,
   nextKeepState,
   parseTaskFile,
+  pickTaskFiles,
   recordPath,
   sanitize,
   taskDirOf,
@@ -145,6 +146,35 @@ describe('keep-list: cleaning and order', () => {
     const items = Object.freeze([task('3'), task('1', 'in_progress')])
     expect(() => tasksOf(items)).not.toThrow()
     expect(items.map(t => t.id)).toEqual(['3', '1'])
+  })
+})
+
+describe('keep-list: which task files are read', () => {
+  // the engine writes <id>.json beside .lock and .highwatermark (observed, 2.1.296)
+  test('only <id>.json is a task file: the lock, the high-water mark, hidden files, backups and other names are not', () => {
+    const names = ['.lock', '.highwatermark', '.hidden.json', 'notes.txt', 'x.json.bak', '1.JSON', 'a b.json', 'a.b.json', '1.json', 'abc.json', 'my-list_2.json', '']
+    expect(pickTaskFiles(names).chosen.sort()).toEqual(['1.json', 'abc.json', 'my-list_2.json'])
+  })
+
+  test('the newest ids first (10 before 9), a name that is not a number after the numbers', () => {
+    expect(pickTaskFiles(['2.json', '10.json', '9.json', 'abc.json', '1.json']).chosen).toEqual(['10.json', '9.json', '2.json', '1.json', 'abc.json'])
+  })
+
+  test('at most 200 are read, the newest, and the rest is counted', () => {
+    const names = Array.from({ length: 250 }, (_, i) => `${i + 1}.json`)
+    const got = pickTaskFiles(names)
+    expect(got.chosen).toHaveLength(200)
+    expect(got.chosen[0]).toBe('250.json')
+    expect(got.chosen.at(-1)).toBe('51.json')
+    expect(got.cut).toBe(50)
+    expect(pickTaskFiles(names.slice(0, 200))).toMatchObject({ cut: 0 })
+    expect(pickTaskFiles([])).toEqual({ chosen: [], cut: 0 })
+  })
+
+  test('the listing is left as it was', () => {
+    const names = Object.freeze(['2.json', '1.json'])
+    expect(() => pickTaskFiles(names)).not.toThrow()
+    expect([...names]).toEqual(['2.json', '1.json'])
   })
 })
 
