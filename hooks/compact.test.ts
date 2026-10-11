@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
-import type { Engine, On } from 'claude-code/testing'
+import type { Engine } from 'claude-code/testing'
+import type { On } from 'claude-code'
 
 import { boot, cardOf, makeSnap, makeWorld } from './fixture'
 import type { World } from './fixture'
