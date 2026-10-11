@@ -250,7 +250,10 @@ describe('the WAITING card: side files through the engine', () => {
       w.files.set(`/alt/cfg/projects/-project/references/side-files/waiting.hosta.json`, CAPTURE['waiting.hosta.json']!.lines.join('\n') + '\n')
     })
     const card = cardOf(await paneView($, 89), 'WAITING')
-    expect(card.value).toBe('2')
+    // alt dir has only hosta's file: X stays open (since 10-01, due) and Y is open; Z lives in the other dir
+    expect(card.value).toBe('2 · 1 due')
+    expect(card.body.join('\n')).toContain('X waiting')
+    expect(card.body.join('\n')).not.toContain('Z waiting')
     expect(world.reads.filter(p => p.includes('side-files')).every(p => p.startsWith('/alt/cfg/'))).toBe(true)
   })
 

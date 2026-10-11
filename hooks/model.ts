@@ -1,6 +1,7 @@
 // Pure functions behind status-pane: no $ calls, so every path runs offline.
 
 import type { AgentGroup, BgItem, BgKind, BgStart, InflightState, CpuSample, HookVerdicts, McpInfo, MemInfo, NowState, Res, RowKey, Snap, Toggles, ToolRun } from './state'
+import { waitingHint } from './waiting'
 
 /** The first line of a failure, less the `<plugin>: $.fs.read: ` the engine puts in front of a refused call. */
 export const why = (err: unknown): string => {
@@ -209,14 +210,15 @@ export const ROW_KEYS: readonly RowKey[] = [
   'history',
   'progress',
   'fixture',
+  'waiting',
 ]
 
 /** The rows file (L19-31): a missing key or file leaves the row on; `enabled:false` is the master switch. */
 export const parseToggles = (text: string | null): Toggles =>
   (text === null ? null : parseTogglesStrict(text)) ?? { enabled: true, rows: allOn() }
 
-/** Rows that stay off until the rows file says `true`: they have no producer on a normal machine. */
-const OPT_IN: readonly RowKey[] = ['fixture']
+/** Rows that stay off until the rows file says `true`: they have no producer on a normal machine. `waiting` is opt-in until the owner decides the default (ticket #28, question 1). */
+const OPT_IN: readonly RowKey[] = ['fixture', 'waiting']
 
 const allOn = () => Object.fromEntries(ROW_KEYS.map(k => [k, !OPT_IN.includes(k)])) as Record<RowKey, boolean>
 
@@ -568,6 +570,9 @@ const buildTail = (snap: Snap | null, nowMs: number, tzMin?: number): string | n
   if (!snap || !snap.toggles.enabled) return null
   const on = snap.toggles.rows
   const parts: string[] = []
+  // first, so the trim below drops the other segments before it
+  const wait = on.waiting ? waitingHint(snap, nowMs) : null
+  if (wait) parts.push(wait)
   const ctxPct = on.usage && snap.context.ok ? knownContextPct(snap.context.v) : null
   if (ctxPct !== null) parts.push(`ctx ${Math.round(ctxPct)}%`)
   if (on.quota && snap.quota.ok) {

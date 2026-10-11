@@ -25,6 +25,7 @@ import {
 } from './model'
 import type { Inflight, Progress, Tone } from './model'
 import { ageText } from './sidefile'
+import { waitingHead, waitingView } from './waiting'
 import type { AgentGroup, InflightState, NowState, Res, Snap } from './state'
 
 export type Seg = { text: string; color?: string; dim?: boolean; bold?: boolean }
@@ -42,7 +43,7 @@ export type PaneView = {
   progress?: { tools: Res<NowState | null>; sid: Res<string>; inflight?: Res<InflightState | null> }
 }
 
-export type CardId = 'header' | 'context' | '5h' | '7d' | 'cost' | 'git' | 'activity' | 'system' | 'progress' | 'fixture' | 'status'
+export type CardId = 'header' | 'context' | '5h' | '7d' | 'cost' | 'git' | 'activity' | 'waiting' | 'system' | 'progress' | 'fixture' | 'status'
 
 /** A body row: a label/value split, a left-packed line, a gauge (`null` is the bare track), or the CPU chart row. */
 export type CardRow =
@@ -568,6 +569,33 @@ const fixtureCard = (snap: Snap, width: number, inner: number, c: Ctx): Card => 
  * `label` and `items` packed into rows of `max` cells, a dim `sep` between the items: a row that breaks keeps the
  * separator at its end, and the rows after the first start under `indent`.
  */
+/** The WAITING card: the open items oldest first, each with age, start date and a DUE flag, then the unreadable hosts. */
+const waitingCard = (snap: Snap, width: number, inner: number, c: Ctx): Card => {
+  const r = snap.waiting
+  if (!r) return { id: 'waiting', width, rows: [titleRow('WAITING', null, inner)] }
+  if (!r.ok) return { id: 'waiting', width, rows: [titleRow('WAITING', null, inner), ...naRows(r.why, inner)] }
+  const view = waitingView(r.v, c.nowMs, c.tzMin)
+  const head = waitingHead(view)
+  const value: Line = [head.count === '—' ? dim('—') : plain(head.count), ...(head.dueText ? [dim(' · '), seg(head.dueText, { color: 'yellow' })] : [])]
+  const rows: CardRow[] = [split([titleSeg('WAITING')], value, inner)]
+  if (view.rows.length === 0 && view.down.length === 0) rows.push({ kind: 'split', parts: [[dim('沒有登記')]] })
+  for (const row of view.rows.slice(0, WAIT_SHOWN)) {
+    rows.push(split([seg(row.age, { bold: true }), dim(` · ${row.date}`)], row.due ? [seg('DUE', { color: 'yellow' })] : [], inner))
+    const lines = wrapWords(row.what.replace(BIDI_RE, ''), inner)
+    const text = lines.slice(0, 2)
+    if (lines.length > 2) text[1] = `${clipText(text[1]!, inner - 1)}…`
+    for (const t of text) rows.push({ kind: 'text', line: [plain(t)] })
+  }
+  if (view.total > WAIT_SHOWN && view.rows.length > 0) rows.push(moreRow(view.total - WAIT_SHOWN))
+  for (const d of view.down.slice(0, WAIT_DOWN_SHOWN)) rows.push(...naRows(`${d.host} ${d.text}`, inner))
+  if (view.down.length > WAIT_DOWN_SHOWN) rows.push({ kind: 'split', parts: [[], [dim(`+${view.down.length - WAIT_DOWN_SHOWN} hosts n/a`)]] })
+  return { id: 'waiting', width, rows }
+}
+
+/** The WAITING card's row limits: items drawn, then `+N more`; unreadable hosts drawn, then a count. */
+const WAIT_SHOWN = 8
+const WAIT_DOWN_SHOWN = 3
+
 const packJoined = (label: string, items: Seg[], sep: string, max: number, indent: string): Line[] => {
   const rows: Line[] = []
   let cur: Line = label === '' ? [] : [dim(label)]
@@ -930,13 +958,14 @@ export const paneLayout = (snap: Snap | null, view: PaneView): Layout => {
       system: on.sys || on.memory_mcp,
       progress: on.progress && c.progress !== null,
       fixture: snap.fixture !== undefined,
+      waiting: on.waiting && snap.waiting !== undefined,
     }
     const bands: BandId[][] =
       tier === 'narrow'
-        ? [['progress'], ['context'], ['5h'], ['7d'], ['cost'], ['git'], ['activity'], ['system'], ['fixture']]
+        ? [['progress'], ['context'], ['5h'], ['7d'], ['cost'], ['git'], ['activity'], ['waiting'], ['system'], ['fixture']]
         : tier === 'medium'
-          ? [['progress'], ['context'], ['5h', '7d'], ['cost', 'git'], ['activity'], ['system'], ['fixture']]
-          : [['progress'], ['context', '5h', '7d'], ['cost', 'git', 'activity'], ['system'], ['fixture']]
+          ? [['progress'], ['context'], ['5h', '7d'], ['cost', 'git'], ['activity'], ['waiting'], ['system'], ['fixture']]
+          : [['progress'], ['context', '5h', '7d'], ['cost', 'git', 'activity'], ['waiting'], ['system'], ['fixture']]
     const build = (id: BandId, width: number): Card => {
       const inner = innerOf(width)
       if (id === 'context') return contextCard(snap, width, inner)
@@ -946,6 +975,7 @@ export const paneLayout = (snap: Snap | null, view: PaneView): Layout => {
       if (id === 'activity') return activityCard(snap, width, inner, c)
       if (id === 'progress') return progressCard(width, inner, c.progress!, c.inflight)
       if (id === 'fixture') return fixtureCard(snap, width, inner, c)
+      if (id === 'waiting') return waitingCard(snap, width, inner, c)
       return systemCard(snap, width, inner, c, true)
     }
     const blocks: Block[] = [{ kind: 'cards', gap: 1, cards: [headerCard(snap, c)] }]

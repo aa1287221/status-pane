@@ -60,6 +60,7 @@ const ioOf = ($: EngineInterface): Io => ({
   usage: () => $.session.usage(),
   home: () => $.env.get('HOME'),
   tmpdir: () => $.env.get('TMPDIR'),
+  configDir: () => $.env.get('CLAUDE_CONFIG_DIR'),
   effortEnv: () => $.env.get('CLAUDE_EFFORT'),
   settings: source => $.settings.read(source ? { source } : undefined),
   exists: path => $.fs.exists(path),
