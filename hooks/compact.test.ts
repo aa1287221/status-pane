@@ -336,6 +336,10 @@ describe('compact window: the settings', () => {
     expect(settingsWindow([{ autoCompactWindow: 300_000, ...pm(OPUS, 400_000) }], OPUS)).toBe(400_000)
   })
 
+  test('the entry beats the top-level value whatever way its key is spelled', () => {
+    for (const key of ['Claude-Opus-5-5', 'claude-opus-5-5[1m]']) expect([key, settingsWindow([{ autoCompactWindow: 300_000, ...pm(key, 400_000) }], OPUS)]).toEqual([key, 400_000])
+  })
+
   test('a higher source\'s top-level value replaces a lower source\'s entry for the model', () => {
     expect(settingsWindow([{ autoCompactWindow: 300_000 }, pm(OPUS, 400_000)], OPUS)).toBe(300_000)
   })
@@ -381,6 +385,8 @@ describe('compact window: the settings', () => {
     expect(settingsWindow([...junk, pm(OPUS, 400_000)], OPUS)).toBe(400_000)
     expect(settingsWindow([pm(OPUS, 400_000)], undefined)).toBeNull()
     expect(settingsWindow([{ autoCompactWindow: 300_000 }], undefined)).toBe(300_000)
+    // a model with no name is not an entry with no name
+    for (const model of ['', '  ']) expect(settingsWindow([pm('', 400_000), pm(' ', 350_000)], model)).toBeNull()
   })
 })
 
@@ -434,9 +440,9 @@ describe('the CONTEXT card: the compaction window', () => {
   for (const columns of [36, 49, 89]) {
     test(`bodyColumns ${columns}: 239,999 of a 400K window is under the line, 240,000 is at it, and the figure says which window`, () => {
       expect(bodyWin(columns, 239_999, W400K)).not.toContain('已達')
-      const at = bodyWin(columns, 240_000, W400K)
-      expect(at).toContain('已達 60%')
-      expect(at).toContain('240.0K')
+      expect(bodyWin(columns, 240_000, W400K)).toContain('已達 60%')
+      // used reads 250.0K here, so a 240.0K that shows is the line's own
+      expect(bodyWin(columns, 250_000, W400K)).toMatch(/已達 60% \(240\.0K\)/)
     })
   }
 
@@ -486,6 +492,14 @@ describe('engine: the compaction window', () => {
     expect(autoCompactOf(world)).toEqual({ window: 250_000, source: 'env' })
   })
 
+  test('the sources are ranked: a project\'s top-level 300K replaces the user\'s entry of 400K', async ($, on) => {
+    const { world } = await setup($, on, { edit: w => {
+      user400k(w)
+      w.settingsBySource.project = { autoCompactWindow: 300_000 }
+    } })
+    expect(autoCompactOf(world)).toEqual({ window: 300_000, source: 'settings' })
+  })
+
   // W13: the discriminating pair: 250K is 62.5% of 400K and 25% of 1M
   test('a 400K compaction window: 250K tokens sends the suggestion', async ($, on) => {
     const { measure } = await setup($, on, { env: SUGGEST, edit: user400k })
@@ -504,6 +518,17 @@ describe('engine: the compaction window', () => {
     await measure(239_999)
     expect(SENT.length).toBe(0)
     await measure(240_000)
+    expect(SENT.length).toBe(1)
+  })
+
+  test('the sources are ranked at the measure too: 180,000 is the line of the project\'s 300K, not of the user\'s 400K', async ($, on) => {
+    const { measure } = await setup($, on, { env: SUGGEST, edit: w => {
+      user400k(w)
+      w.settingsBySource.project = { autoCompactWindow: 300_000 }
+    } })
+    await measure(179_999)
+    expect(SENT.length).toBe(0)
+    await measure(180_000)
     expect(SENT.length).toBe(1)
   })
 

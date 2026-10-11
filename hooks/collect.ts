@@ -33,6 +33,8 @@ import {
   step,
   why,
 } from './model'
+import { effectiveWindow } from './compact'
+import type { EffectiveWindow } from './compact'
 import { fixtureOf, naReason, readSideKind } from './sidefile'
 import type { Cum, RlField, RlSnap, RlSnaps, RlWindow } from './model'
 import type { CpuSample, GitCounts, GitInfo, HookVerdicts, QuotaWindow, Res, Snap, Toggles } from './state'
@@ -48,6 +50,8 @@ export type Io = {
   home: () => Promise<string | undefined>
   tmpdir: () => Promise<string | undefined>
   effortEnv: () => Promise<string | undefined>
+  /** The variable the engine reads before the settings for the window it compacts at. */
+  compactWindowEnv: () => Promise<string | undefined>
   settings: (source?: SettingsSource) => Promise<Settings>
   exists: (path: string) => Promise<boolean>
   read: (path: string) => Promise<string>
@@ -378,6 +382,21 @@ const readToggles = async (io: Io, b: Base, prev: Toggles | null): Promise<Toggl
 /** The merge takes `hooks` whole from the last source that has it, so each source is read as well. */
 const SETTINGS_SOURCES: SettingsSource[] = ['user', 'project', 'local', 'flag', 'policy']
 
+/** Each source's settings, lowest precedence first; null when one cannot be read, since then nothing of them is known. */
+export const readSources = async (io: Io): Promise<unknown[] | null> => {
+  try {
+    return await Promise.all(SETTINGS_SOURCES.map(source => io.settings(source)))
+  } catch {
+    return null
+  }
+}
+
+/** The window the /compact line is taken of; the model's own when nothing says otherwise. Never throws. */
+export const compactWindowOf = async (io: Io, window: number | undefined, ascending: readonly unknown[] | null): Promise<EffectiveWindow | null> => {
+  const [model, env] = await Promise.all([io.model().catch(() => undefined), io.compactWindowEnv().catch(() => undefined)])
+  return effectiveWindow({ window, model, env, sources: ascending === null ? [] : [...ascending].reverse() })
+}
+
 const REFRESHER = 'mcp-status-refresh.js'
 const refresherPath = (home: string): string => `${home}/.claude/hooks/${REFRESHER}`
 
@@ -463,7 +482,7 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
     return guard(io, fn, ms)
   }
 
-  const [summary, dir, git, model, agents, compacts, cumRes, quota, cpuRes, ramRes, memory, mcp, edited, side] =
+  const [summary, dir, git, model, agents, compacts, cumRes, quota, cpuRes, ramRes, memory, mcp, edited, side, autoCompactRes] =
     await Promise.all([
       row(on.summary, [base, summaryWired], () => collectSummary(io, b!)),
       row(on.dir || on.repo, [base], async () => shortDir(b!.cwd, b!.home)),
@@ -486,6 +505,8 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
       ),
       row(on.edited, [base, wired('edited')], () => collectEdited(io, b!)),
       row(on.fixture, [base], () => readSideKind(io, 'fixture', { tmpdir: b!.tmp }, {}, input.now)),
+      // the settings were read above: every source after the merge, lowest first
+      row(on.usage, [base, usage], () => compactWindowOf(io, u!.context.window, settingsRes?.ok ? settingsRes.v.slice(1) : null)),
     ])
 
   const fromCum = <T>(f: (c: CumOut) => T): Res<T> =>
@@ -502,6 +523,7 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
           used: usage.v.context.tokens ?? 0,
           max: usage.v.context.window,
           compacts,
+          ...(autoCompactRes.ok && autoCompactRes.v !== null ? { autoCompact: autoCompactRes.v } : {}),
         },
       }
   const snap: Snap = {

@@ -361,12 +361,14 @@ const kvRows = (label: string, rows: Line[]): CardRow[] =>
 /** A cell of `width` cells with `text` against its right edge. */
 const cell = (text: string, width: number): string => ' '.repeat(Math.max(0, width - dw(text))) + text
 
-/** The threshold hint and the mode line under the CONTEXT rows; nothing below the line. */
-const compactRows = (fill: number | null, compact: CompactState | null, inner: number): CardRow[] => {
+/** The threshold hint and the mode line under the CONTEXT rows; nothing below the line. `base` is the window the line is taken of. */
+const compactRows = (fill: number | null, compact: CompactState | null, inner: number, base: number, max: number): CardRow[] => {
   const advice = adviceOf(fill, compact ?? { atPct: DEFAULT_AT })
   if (advice === null) return []
+  // the figure is told only when the line is taken of a smaller window than the one `used` is told against
+  const figure = base < max ? ` (${fmtTok(Math.round((advice.atPct * base) / 100))})` : ''
   const tone = PALETTE[pctColor(advice.pct)]
-  const rows: CardRow[] = wrapWords(`△ 已達 ${advice.atPct}% · 建議 /compact`, inner).map((t): CardRow => ({ kind: 'text', line: [seg(t, { color: tone })] }))
+  const rows: CardRow[] = wrapWords(`△ 已達 ${advice.atPct}%${figure} · 建議 /compact`, inner).map((t): CardRow => ({ kind: 'text', line: [seg(t, { color: tone })] }))
   if (compact) rows.push(...kv('suggest', [plain(modeLabel(compact))], inner))
   return rows
 }
@@ -388,7 +390,8 @@ const contextCard = (snap: Snap, width: number, inner: number, compact: CompactS
     if (widthOf(usedPair) + 3 + widthOf(compactPair) <= inner) rows.push({ kind: 'split', parts: [usedPair, compactPair] })
     else rows.push(...kv('used', [plain(figure)], inner), ...kv('compact', [plain(String(compacts.v))], inner))
   }
-  rows.push(...compactRows(fillOf({ tokens: used, window: max }), compact, inner))
+  const base = r.v.autoCompact?.window ?? max
+  rows.push(...compactRows(fillOf({ tokens: used, window: base }), compact, inner, base, max))
   return { id: 'context', width, rows }
 }
 

@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import { MCP_EVERY_MS, refresh } from './collect'
+import { MCP_EVERY_MS, compactWindowOf, readSources, refresh } from './collect'
 import type { Io } from './collect'
 import { addRun, addStart, bgStartOf, endTask, mayStartBg, noteStop, cannotDraw, DEAD_MS, dropRun, effortFrom, mergeTail, patchLineCount, progressText, runOf, sidOf, STALE_MS, tailText, why } from './model'
 import { HIST_MAX, layoutTree, paneLayout } from './pane'
@@ -68,6 +68,7 @@ const ioOf = ($: EngineInterface): Io => ({
   home: () => $.env.get('HOME'),
   tmpdir: () => $.env.get('TMPDIR'),
   effortEnv: () => $.env.get('CLAUDE_EFFORT'),
+  compactWindowEnv: () => $.env.get('CLAUDE_CODE_AUTO_COMPACT_WINDOW'),
   settings: source => $.settings.read(source ? { source } : undefined),
   exists: path => $.fs.exists(path),
   read: path => $.fs.read(path),
@@ -323,7 +324,10 @@ const noteMeasure = async ($: EngineInterface, run: Run, e: { changed: readonly 
     const cfg = compactConfig(await $.env.get('STATUS_PANE_CTX_AT'), await $.env.get('STATUS_PANE_CTX_SUGGEST'))
     const sid = sidOf(await $.session.id())
     const now = await $.clock.now()
-    const d = shouldSuggest(await read($, compactA), sid, fillOf(e.context), cfg)
+    // the window is worked out afresh: a /model or a settings edit since the last refresh moves it
+    const io = ioOf($)
+    const win = await compactWindowOf(io, e.context.window, await readSources(io))
+    const d = shouldSuggest(await read($, compactA), sid, fillOf({ tokens: e.context.tokens, window: win?.window ?? e.context.window }), cfg)
     const send = d.fire && cfg.mode === 'suggest' && !run.suggesting
     // the claim is taken before the first await of the send, so a burst folds into one call
     if (send) run.suggesting = true

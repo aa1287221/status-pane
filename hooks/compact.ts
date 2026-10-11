@@ -58,9 +58,96 @@ export const WINDOW_MAX = 1_000_000
 export type WindowSource = 'env' | 'settings' | 'window'
 export type EffectiveWindow = { window: number; source: WindowSource }
 
-// Stubs that keep the model's window; the resolver replaces them.
-export const envWindow = (_raw: string | undefined): number | null => null
-export const canonModel = (name: string): string => name
-export const settingsWindow = (_sources: readonly unknown[], _model: string | undefined): number | 'auto' | null => null
-export const effectiveWindow = (a: { window: number | undefined; model: string | undefined; env: string | undefined; sources: readonly unknown[] }): EffectiveWindow | null =>
-  typeof a.window === 'number' && Number.isFinite(a.window) && a.window > 0 ? { window: a.window, source: 'window' } : null
+const recordOf = (v: unknown): Record<string, unknown> | null => (typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null)
+
+// The engine's reader for the variable: an exponent form, a thousands-marked form, else the leading integer.
+const EXPONENT = /^[+-]?(\d+(\.\d*)?|\.\d+)[eE][+-]?\d+$/
+const MARKED = /^[+-]?\d{1,3}([_,\u00A0\u202F ])\d{3}(?:\1\d{3})*$/
+const MARKS = /[_,\u00A0\u202F ]/g
+
+const engineInt = (text: string): number => {
+  const s = text.trim()
+  if (s.length <= 32) {
+    if (EXPONENT.test(s)) {
+      const n = Number(s)
+      return Number.isInteger(n) ? n : Number.NaN
+    }
+    if (MARKED.test(s)) return parseInt(s.replace(MARKS, ''), 10)
+  }
+  return parseInt(s, 10)
+}
+
+/** `CLAUDE_CODE_AUTO_COMPACT_WINDOW` as the engine reads it: unreadable or not above 0 is skipped, the rest is floored at 100000 and capped at 1000000. */
+export const envWindow = (raw: string | undefined): number | null => {
+  if (!raw) return null
+  const n = engineInt(raw)
+  if (Number.isNaN(n) || n <= 0) return null
+  return Math.max(WINDOW_MIN, Math.min(WINDOW_MAX, n))
+}
+
+/** A model reduced to the name the settings key it by: dated, [1m], Vertex, Bedrock and any case all name one model; a prefix names another. */
+export const canonModel = (name: string): string =>
+  name
+    .trim()
+    .toLowerCase()
+    .replace(/(\[[^\]]*\])+$/, '')
+    .replace(/^(?:[a-z0-9-]+\.)?anthropic\./, '')
+    .replace(/-v\d+(?::\d+)?$/, '')
+    .replace(/@\d{8}$/, '')
+    .replace(/-\d{8}$/, '')
+
+const validWindow = (v: unknown): number | null => (typeof v === 'number' && Number.isInteger(v) && v >= WINDOW_MIN && v <= WINDOW_MAX ? v : null)
+
+/** One file's say for the model `key`: its entry (a number, or "auto"), else the top-level number. */
+const fileWindow = (file: unknown, key: string | null): number | 'auto' | null => {
+  const rec = recordOf(file)
+  if (rec === null) return null
+  let first: number | 'auto' | null = null
+  if (key !== null) {
+    for (const [name, entry] of Object.entries(recordOf(rec.modelSettings) ?? {})) {
+      if (canonModel(name) !== key) continue
+      const v = recordOf(entry)?.autoCompactWindow
+      const w = v === 'auto' ? 'auto' : validWindow(v)
+      if (w === null) continue
+      // the canonical spelling wins over any other, else the first
+      if (name === key) return w
+      first ??= w
+    }
+  }
+  return first ?? validWindow(rec.autoCompactWindow)
+}
+
+/** The window the settings name for `model`; `sources` come highest precedence first and the first with a say decides. null when none has. */
+export const settingsWindow = (sources: readonly unknown[], model: string | undefined): number | 'auto' | null => {
+  const key = model === undefined || model.trim() === '' ? null : canonModel(model)
+  for (const file of sources) {
+    const w = fileWindow(file, key)
+    if (w !== null) return w
+  }
+  return null
+}
+
+/** The highest source that names a boolean decides whether auto-compact is on. */
+const autoCompactOn = (sources: readonly unknown[]): boolean => {
+  for (const file of sources) {
+    const v = recordOf(file)?.autoCompactEnabled
+    if (typeof v === 'boolean') return v
+  }
+  return true
+}
+
+/**
+ * The window the line is taken of: what the engine compacts at, never wider than the model's `window`. The variable comes
+ * first, then the settings (only while auto-compact is on), then the model's own. null when the window itself is unknown.
+ */
+export const effectiveWindow = (a: { window: number | undefined; model: string | undefined; env: string | undefined; sources: readonly unknown[] }): EffectiveWindow | null => {
+  const full = a.window
+  if (typeof full !== 'number' || !Number.isFinite(full) || full <= 0) return null
+  const env = envWindow(a.env)
+  if (env !== null) return { window: Math.min(full, env), source: 'env' }
+  if (autoCompactOn(a.sources)) {
+    const set = settingsWindow(a.sources, a.model)
+    if (typeof set === 'number') return { window: Math.min(full, set), source: 'settings' }
+  }
+  return { window: full, source: 'window' }
+}

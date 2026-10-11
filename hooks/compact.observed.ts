@@ -118,4 +118,6 @@ export const OBSERVED: Observed[] = [
   {"id": "c03-string-top-plus-valid-permodel", "model": "claude-opus-5-5", "window": 1000000, "user": {"autoCompactWindow": "300000", "modelSettings": {"claude-opus-5-5": {"autoCompactWindow": 400000}}}, "want": 400000, "engine": "settings", "enabled": true},
   {"id": "c04-invalid-permodel-entry-plus-valid-other-entry", "model": "claude-opus-5-5", "window": 1000000, "user": {"modelSettings": {"claude-opus-5": {"autoCompactWindow": "x"}, "claude-opus-5-5": {"autoCompactWindow": 400000}}}, "want": 400000, "engine": "settings", "enabled": true},
   {"id": "c05-invalid-enabled-only-plus-top-300k-other-file", "model": "claude-opus-5-5", "window": 1000000, "user": {"autoCompactEnabled": "false"}, "project": {"autoCompactWindow": 300000}, "want": 300000, "engine": "settings", "enabled": true},
+  {"id": "d00-key-uppercase-plus-top-300k-same-file", "model": "claude-opus-5-5", "window": 1000000, "user": {"autoCompactWindow": 300000, "modelSettings": {"Claude-Opus-5-5": {"autoCompactWindow": 400000}}}, "want": 400000, "engine": "settings", "enabled": true},
+  {"id": "d01-key-1m-plus-top-300k-same-file", "model": "claude-opus-5-5", "window": 1000000, "user": {"autoCompactWindow": 300000, "modelSettings": {"claude-opus-5-5[1m]": {"autoCompactWindow": 400000}}}, "want": 400000, "engine": "settings", "enabled": true},
 ]
