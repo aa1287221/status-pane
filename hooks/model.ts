@@ -713,6 +713,20 @@ export const addStart = (s: InflightState | null, sid: string, start: BgStart): 
 const tidy = (v: unknown): string =>
   typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, '').trim() : ''
 
+/** Cuts `s` to `max` display cells on code point boundaries, `…` marking a cut (the rule of `clipText` in pane.ts). */
+const clipCells = (s: string, max: number): string => {
+  if (dw(s) <= max) return s
+  let out = ''
+  let used = 0
+  for (const ch of s) {
+    const cw = dw(ch)
+    if (used + cw > max - 1) break
+    out += ch
+    used += cw
+  }
+  return `${out.trimEnd()}…`
+}
+
 const kindOf = (type: string): BgKind => (type === 'shell' || type === 'subagent' || type === 'monitor' || type === 'workflow' ? type : 'other')
 
 /** Names the task from the fields the engine gives per type, never from its command line or prompt. */
@@ -721,7 +735,7 @@ const labelOf = (t: Record<string, unknown>): { kind: BgKind; label: string } =>
   const kind = kindOf(type)
   const detail = kind === 'subagent' ? tidy(t.agent_type) : kind === 'workflow' ? tidy(t.name) : kind === 'monitor' ? [tidy(t.server), tidy(t.tool)].filter(Boolean).join(':') : ''
   const head = kind === 'subagent' ? 'agent' : kind === 'other' ? type || 'task' : kind
-  return { kind, label: (detail ? `${head} ${detail}` : head).slice(0, BG_LABEL_MAX) }
+  return { kind, label: clipCells(detail ? `${head} ${detail}` : head, BG_LABEL_MAX) }
 }
 
 type StopInput = { background_tasks?: unknown; session_crons?: unknown }

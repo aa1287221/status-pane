@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { boot, cardOf, deferred, installWorld, makeSnap, makeWorld, paneView, pair } from './fixture'
 import type { World } from './fixture'
-import { addStart, bgStartOf, endTask, inflightOf, mayStartBg, noteStop, progressText, startOf, taskIdOf } from './model'
+import { addStart, bgStartOf, dw, endTask, inflightOf, mayStartBg, noteStop, progressText, startOf, taskIdOf } from './model'
 import { layoutTree, paneLayout } from './pane'
 import type { BgStart, InflightState, NowState, Res } from './state'
 import { FAKE_ELS, findOverflow, paneParts } from './tree'
@@ -296,6 +296,55 @@ describe('inflight: the Stop snapshot', () => {
     expect(out.items[0].label).toMatch(/^workflow abc/)
     expect(out.items[0].label.length).toBeLessThanOrEqual(48)
     expect(out.items[0].label).not.toMatch(new RegExp(`[${RLO}\\n]`))
+  })
+
+  const CJK = String.fromCodePoint(0x4e2d)
+  const EMOJI = String.fromCodePoint(0x1f600)
+  const labelOf = (name: string) => noteStop(null, 'S1', { background_tasks: [bt({ type: 'workflow', name, command: undefined })], session_crons: [] }, T0)!.items[0].label
+  // a high surrogate without its low one, or a low one without its high
+  const loneSurrogate = (text: string): boolean => {
+    for (let i = 0; i < text.length; i++) {
+      const c = text.charCodeAt(i)
+      if (c >= 0xd800 && c <= 0xdbff) {
+        const d = text.charCodeAt(i + 1)
+        if (!(d >= 0xdc00 && d <= 0xdfff)) return true
+        i++
+      } else if (c >= 0xdc00 && c <= 0xdfff) return true
+    }
+    return false
+  }
+
+  test('label check: the detector finds a split pair and passes a whole one', () => {
+    expect(loneSurrogate(`x${EMOJI.slice(0, 1)}`)).toBe(true)
+    expect(loneSurrogate(`${EMOJI.slice(1)}x`)).toBe(true)
+    expect(loneSurrogate(`x${EMOJI}x`)).toBe(false)
+  })
+
+  test('label: a long CJK name is cut at 48 cells with an ellipsis, not at 48 characters', () => {
+    const label = labelOf(CJK.repeat(60))
+    expect(dw(label)).toBeLessThanOrEqual(48)
+    expect(label).toBe(`workflow ${CJK.repeat(19)}…`)
+  })
+
+  test('label: an emoji that straddles the cut is dropped whole, never split', () => {
+    const label = labelOf(`${'x'.repeat(38)}${EMOJI}more text`)
+    expect(loneSurrogate(label)).toBe(false)
+    expect(dw(label)).toBeLessThanOrEqual(48)
+    expect(label).toBe(`workflow ${'x'.repeat(38)}…`)
+    // one cell earlier its two cells still do not fit, and its halves are not tried one by one
+    const early = labelOf(`${'x'.repeat(37)}${EMOJI}more text`)
+    expect(loneSurrogate(early)).toBe(false)
+    expect(early).toBe(`workflow ${'x'.repeat(37)}…`)
+    // the emoji that fits is kept whole
+    const kept = labelOf(`${'x'.repeat(36)}${EMOJI}more text`)
+    expect(loneSurrogate(kept)).toBe(false)
+    expect(kept).toBe(`workflow ${'x'.repeat(36)}${EMOJI}…`)
+  })
+
+  test('label: 48 cells fit as they are; 49 are cut to 47 and an ellipsis; a space at the cut goes with it', () => {
+    expect(labelOf('x'.repeat(39))).toBe(`workflow ${'x'.repeat(39)}`)
+    expect(labelOf('x'.repeat(40))).toBe(`workflow ${'x'.repeat(38)}…`)
+    expect(labelOf(`${'x'.repeat(37)} yyy`)).toBe(`workflow ${'x'.repeat(37)}…`)
   })
 
   test('a field the engine left out is not an empty list: the earlier items of that class stay', () => {
