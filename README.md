@@ -38,7 +38,7 @@ Claude Code 的 function-hooks mod，用來取代原生的 `statusLine`（cc-sta
 - `/progress`：回合進行中也立即印出目前的工具與經過時間，以及背景工作（來源是上一次回合結束的快照）（和 PROGRESS 卡同一份資料，不經模型）；資料缺失時印 `n/a（原因）`。
 - `~/.claude/cc-statusline-rows.json` 可以逐列關閉；設成 `"enabled": false` 會整個停用，什麼都不收集、不寫入。
 - 加上 `"fixture": true`（只認布林 true，`1`、`"yes"` 不算）會多出一張 FIXTURE 卡，讀 `$TMPDIR/claude-side/fixture.json`（side file 契約的示範，預設關閉）；檔案缺少、過期或損毀時，卡片顯示 `n/a（原因）`。
-- 加上 `"sync": true` 會多出一張 SYNC 卡（claude-memory 與 `origin/sync-data-v2` 的領先／落後、上次 push 與 fetch 時間），提示列也會先顯示 `SYNC -N PULL`。資料來自 `~/.claude/scripts/hooks/sync-status.py`，只讀本地 ref，不連網，預設關閉。
+- SYNC 卡（claude-memory 與 `origin/sync-data-v2` 的領先／落後、上次 push 與 fetch 時間）預設開啟，提示列也會先顯示 `SYNC -N PULL`。資料來自 `~/.claude/scripts/hooks/sync-status.py`，只讀本地 ref，不連網。沒有這支 producer 的機器上，卡片顯示 `n/a（缺檔）`，並算一個錯誤。要關掉就在 `~/.claude/cc-statusline-rows.json` 加上 `"sync": false`，卡片、提示列的 SYNC 段與那個錯誤都會一起消失。
 
 ## 開發
 
