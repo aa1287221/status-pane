@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { CAPTURE, HUB, HUB_COMMIT, bytesOf } from './waiting.fixtures'
 import { collectWaiting, itemsOf, mergeBoard, waitingHead, waitingView } from './waiting'
-import type { WaitingIo } from './waiting'
+import type { RawItem, WaitingIo } from './waiting'
 import { readSideFile } from './sidefile'
 import type { SideOk } from './sidefile'
 
@@ -34,7 +34,7 @@ const fakeIo = (files: Record<string, string | Uint8Array>, opts: { denyList?: b
   return io
 }
 
-const hubFiles = (): Record<string, Uint8Array> => ({
+const hubFiles = (): Record<string, string> => ({
   'waiting.hosta.json': bytesOf(HUB['waiting.hosta.json']!.lines),
   'waiting.hostb.json': bytesOf(HUB['waiting.hostb.json']!.lines),
 })
@@ -77,9 +77,9 @@ const sha256 = async (bytes: Uint8Array): Promise<string> =>
   [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2, '0')).join('')
 
 /** The per-host items the merge sees: each file through the reader and the item rules. */
-const perHostOf = async (files: Record<string, Uint8Array>) => {
+const perHostOf = async (files: Record<string, string>) => {
   const io = fakeIo(files)
-  const out: { host: string; items: NonNullable<ReturnType<typeof itemsOf>['v']> }[] = []
+  const out: { host: string; items: RawItem[] }[] = []
   for (const name of Object.keys(files).sort()) {
     const r = await readSideFile(io, `${DIR}/${name}`, NOW)
     if (r.verdict !== 'ok') throw new Error(`${name} is ${r.verdict}`)
