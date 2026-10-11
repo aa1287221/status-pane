@@ -15,15 +15,17 @@ import {
   fmtReset7d,
   fmtResetClock,
   fmtElapsed,
+  inflightOf,
+  PERM_NA,
   fmtTok,
   knownContextPct,
   pctColor,
   progressOf,
   staleness,
 } from './model'
-import type { Progress, Tone } from './model'
+import type { Inflight, Progress, Tone } from './model'
 import { ageText } from './sidefile'
-import type { AgentGroup, NowState, Res, Snap } from './state'
+import type { AgentGroup, InflightState, NowState, Res, Snap } from './state'
 
 export type Seg = { text: string; color?: string; dim?: boolean; bold?: boolean }
 export type Line = Seg[]
@@ -37,7 +39,7 @@ export type PaneView = {
   raster?: boolean
   cpuHist?: readonly number[]
   /** What the PROGRESS card is drawn from; without it the card is left out. */
-  progress?: { tools: Res<NowState | null>; sid: Res<string> }
+  progress?: { tools: Res<NowState | null>; sid: Res<string>; inflight?: Res<InflightState | null> }
 }
 
 export type CardId = 'header' | 'context' | '5h' | '7d' | 'cost' | 'git' | 'activity' | 'system' | 'progress' | 'fixture' | 'status'
@@ -310,7 +312,7 @@ export const sparkText = (samples: readonly number[], columns: number): string =
 
 // ---- cards ----
 
-type Ctx = { w: number; tier: Tier; nowMs: number; tzMin: number | undefined; raster: boolean; hist: readonly number[]; progress: Res<Progress> | null }
+type Ctx = { w: number; tier: Tier; nowMs: number; tzMin: number | undefined; raster: boolean; hist: readonly number[]; progress: Res<Progress> | null; inflight: Res<Inflight> | null }
 
 const innerOf = (width: number): number => width - 4
 
@@ -507,19 +509,40 @@ const gitCard = (snap: Snap, width: number, inner: number): Card => {
   return { id: 'git', width, rows }
 }
 
-/** NOW: the main loop's calls in flight, oldest first, each with its elapsed time at this draw; the row `/progress` prints as text. */
-const progressCard = (width: number, inner: number, p: Res<Progress>): Card => {
+/** NOW: the main loop's calls in flight, oldest first, each with its elapsed time at this draw; BG and PERM follow. The rows `/progress` prints as text. */
+const progressCard = (width: number, inner: number, p: Res<Progress>, bg: Res<Inflight> | null): Card => {
   const rows: CardRow[] = [titleRow('PROGRESS', null, inner)]
-  if (!p.ok) return { id: 'progress', width, rows: [...rows, ...naRows(`n/a（${p.why}）`, inner)] }
-  if (p.v.running.length === 0) return { id: 'progress', width, rows: [...rows, ...kv('NOW', [dim('idle')], inner)] }
-  p.v.running.forEach((r, i) => {
-    const elapsed = fmtElapsed(r.sec)
-    // a name too long for the row loses its head: the end of an mcp tool name is the part that tells
-    const name = clipStart(r.tool, Math.max(2, inner - dw('NOW') - GAP - 1 - dw(elapsed)))
-    rows.push({ kind: 'split', parts: [i === 0 ? [dim('NOW')] : [], [plain(name), plain(' '), seg(elapsed, { color: 'yellow' })]] })
-  })
-  if (p.v.more > 0) rows.push({ kind: 'split', parts: [[], [dim(`+${p.v.more} more`)]] })
+  if (!p.ok) rows.push(...naRows(`n/a（${p.why}）`, inner))
+  else if (p.v.running.length === 0) rows.push(...kv('NOW', [dim('idle')], inner))
+  else {
+    p.v.running.forEach((r, i) => {
+      const elapsed = fmtElapsed(r.sec)
+      // a name too long for the row loses its head: the end of an mcp tool name is the part that tells
+      const name = clipStart(r.tool, Math.max(2, inner - dw('NOW') - GAP - 1 - dw(elapsed)))
+      rows.push({ kind: 'split', parts: [i === 0 ? [dim('NOW')] : [], [plain(name), plain(' '), seg(elapsed, { color: 'yellow' })]] })
+    })
+    if (p.v.more > 0) rows.push({ kind: 'split', parts: [[], [dim(`+${p.v.more} more`)]] })
+  }
+  if (bg) rows.push(...bgRows(bg, inner))
   return { id: 'progress', width, rows }
+}
+
+/** BG: what the last Stop snapshot listed, each with how long it has waited (`≥` when only a lower bound), then the PERM row: always n/a (#9: PermissionRequest did not fire under -p; the TUI is untried). */
+const bgRows = (bg: Res<Inflight>, inner: number): CardRow[] => {
+  const rows: CardRow[] = []
+  if (!bg.ok) rows.push(...naRows(`BG n/a（${bg.why}）`, inner))
+  else {
+    if (bg.v.items.length === 0) rows.push(...kv('BG', [dim('none')], inner))
+    bg.v.items.forEach((r, i) => {
+      const elapsed = fmtElapsed(r.sec)
+      const name = clipText(`${r.exact ? '' : '≥'}${r.label}`, Math.max(2, inner - dw('BG') - GAP - 1 - dw(elapsed)))
+      rows.push({ kind: 'split', parts: [i === 0 ? [dim('BG')] : [], [plain(name), plain(' '), seg(elapsed, { color: 'yellow' })]] })
+    })
+    if (bg.v.more > 0) rows.push({ kind: 'split', parts: [[], [dim(`+${bg.v.more} more`)]] })
+    rows.push({ kind: 'split', parts: [[], [dim(`snapshot ${fmtElapsed(bg.v.ageSec)} ago`)]] })
+  }
+  rows.push(...naRows(`PERM ${PERM_NA}`, inner))
+  return rows
 }
 
 /** The demo card of the side file path: the count the file holds, its age at this draw and when it was observed. */
@@ -895,7 +918,7 @@ export const paneLayout = (snap: Snap | null, view: PaneView): Layout => {
     if (!snap) return statusLayout(view, w, 'waiting for the first refresh')
     if (!snap.toggles.enabled) return statusLayout(view, w, ROWS_FILE_HINT)
     const tier = tierOf(w)
-    const c: Ctx = { w, tier, nowMs: view.nowMs, tzMin: view.tzMin, raster: view.raster === true, hist: view.cpuHist ?? [], progress: view.progress ? progressOf(view.progress.tools, view.progress.sid, view.nowMs) : null }
+    const c: Ctx = { w, tier, nowMs: view.nowMs, tzMin: view.tzMin, raster: view.raster === true, hist: view.cpuHist ?? [], progress: view.progress ? progressOf(view.progress.tools, view.progress.sid, view.nowMs) : null, inflight: view.progress?.inflight ? inflightOf(view.progress.inflight, view.progress.sid, view.nowMs) : null }
     const on = snap.toggles.rows
     const present: Record<BandId, boolean> = {
       context: on.usage,
@@ -921,7 +944,7 @@ export const paneLayout = (snap: Snap | null, view: PaneView): Layout => {
       if (id === 'cost') return costCard(snap, width, inner)
       if (id === 'git') return gitCard(snap, width, inner)
       if (id === 'activity') return activityCard(snap, width, inner, c)
-      if (id === 'progress') return progressCard(width, inner, c.progress!)
+      if (id === 'progress') return progressCard(width, inner, c.progress!, c.inflight)
       if (id === 'fixture') return fixtureCard(snap, width, inner, c)
       return systemCard(snap, width, inner, c, true)
     }

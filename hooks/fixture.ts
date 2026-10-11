@@ -536,7 +536,9 @@ export const installWorld = (on: On, world: World): { clock: MockClock; advance:
   on('turn.complete', () => ({ text: '' }))
   on('classic.PostToolUse', () => ({}))
   on('classic.Stop', () => ({}))
+  on('classic.SubagentStop', () => ({}))
   on('tool.call', () => world.toolResult() as never)
+  on('ui.render', { component: 'UserMessage' }, (_$, e) => ({ type: 'Text', props: {}, children: [e.props.text] }))
   on('ui.render', { component: 'PromptHint' }, (_$, e) => ({
     type: 'Text',
     props: {},
