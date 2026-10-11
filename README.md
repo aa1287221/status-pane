@@ -37,7 +37,7 @@ Claude Code 的 function-hooks mod，用來取代原生的 `statusLine`（cc-sta
 - 手動打開或叫回來，輸入 `/status-pane`。
 - `/progress`：回合進行中也立即印出目前的工具與經過時間，以及背景工作（來源是上一次回合結束的快照）（和 PROGRESS 卡同一份資料，不經模型）；資料缺失時印 `n/a（原因）`。
 - `~/.claude/cc-statusline-rows.json` 可以逐列關閉；設成 `"enabled": false` 會整個停用，什麼都不收集、不寫入。
-- 加上 `"waiting": true`（預設關閉，待 owner 決定預設，見 #28）會多出一張 WAITING 卡，讀 `~/.claude/projects/-project/references/side-files/waiting.<host>.json`，列出所有機器尚未關閉的等待項目（超過 7 天標 DUE）；提示行前面加 `WAIT N`。卡片只讀、不寫入；`"waiting": false` 關閉卡片與提示段。
+- WAITING 卡預設開啟（見 #28）：讀 `~/.claude/projects/-project/references/side-files/waiting.<host>.json`，列出所有機器尚未關閉的等待項目（超過 7 天標 DUE）；沒有項目時顯示「沒有登記」；提示行前面加 `WAIT N`。卡片只讀、不寫入；`"waiting": false` 關閉卡片與提示段。
 - 加上 `"fixture": true`（只認布林 true，`1`、`"yes"` 不算）會多出一張 FIXTURE 卡，讀 `$TMPDIR/claude-side/fixture.json`（side file 契約的示範，預設關閉）；檔案缺少、過期或損毀時，卡片顯示 `n/a（原因）`。
 
 ## 開發

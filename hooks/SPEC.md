@@ -247,8 +247,8 @@ refused `exists` or read, a wrong type from the seam, an invalid clock or a host
 
 ### WAITING card (kind `waiting`, synced, #28)
 
-Off unless the rows file has `"waiting": true` (opt-in until the owner answers question 1 of #28; the flip is one
-line in `OPT_IN`). Reads `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/-project/references/side-files/` after `exists`,
+On unless the rows file has `"waiting": false` (a falsy value does the same; not in `OPT_IN`, so an empty board shows
+`0` and 沒有登記). Off means the directory is never listed. Reads `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/-project/references/side-files/` after `exists`,
 then `list`: names matching `^waiting\.([A-Za-z0-9][A-Za-z0-9_-]{0,63})\.json$` only, sorted, 16 read at most (the rest
 counted as `skipped`). Each file goes through `readSideFile` (envelope rules and the host-vs-producer check), then the
 SCHEMA 9 item rules; a violation makes that host `n/a（格式錯誤：第 n 筆 …）`. Merge (7.1): closed beats open, then the
