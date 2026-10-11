@@ -147,6 +147,9 @@ const tryRead = async (io: Io, path: string): Promise<string | null> => {
 const readOpt = async (io: Io, path: string): Promise<string | null> =>
   (await io.exists(path)) ? tryRead(io, path) : null
 
+/** The reason both tracker rows give when the file exists and the read fails. */
+const UNREADABLE_AGENTS = 'agents file unreadable'
+
 const readMany = async (io: Io, paths: string[]): Promise<(string | null)[]> => {
   const out: (string | null)[] = []
   for (let i = 0; i < paths.length; i += 20) {
@@ -474,7 +477,9 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
       row(on.dir || on.repo, [base], () => collectGit(io, b!), GIT_ROW_MS),
       row(on.model, [base], () => collectModel(io, b!, input, settingsByRank)),
       row(on.agents, [base, wired('agents')], async () => {
-        const text = await readOpt(io, `${b!.tmp}/claude-agents-${b!.sid}.json`)
+        const file = `${b!.tmp}/claude-agents-${b!.sid}.json`
+        // absent is a fresh session; a file that is there but cannot be read is another cause, and says so
+        const text = (await io.exists(file)) ? await io.read(file).catch(() => Promise.reject(new Error(UNREADABLE_AGENTS))) : null
         return { text, groups: groupAgents(parseJson(text)) }
       }),
       row(on.usage, [base, wired('compact')], () => collectCompacts(io, b!)),

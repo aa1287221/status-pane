@@ -240,6 +240,31 @@ describe('dispatch: through the engine', () => {
     expect((await paneText($, 89)).join('\n')).toMatch(/1 error\b/)
   })
 
+  for (const { columns, tier } of WIDTHS) {
+    test(`${tier} (${columns} columns): a tracker that exists but cannot be read reads n/a（agents file unreadable）, not missing`, async ($, on) => {
+      await boot($, on, w => {
+        w.now = T0
+        w.files.set(TRACKER, tracker(...fresh(2)))
+        w.denyRead.add(TRACKER)
+      })
+      const body = squash(cardOf(await paneView($, columns), 'ACTIVITY').body.join(''))
+      expect(body).toContain(squash('in-flight n/a（agents file unreadable）'))
+      expect(body).not.toContain(squash('agents file missing'))
+      expect((await paneText($, columns)).join('\n')).toMatch(/1 error\b/)
+    })
+  }
+
+  test('a tracker that cannot be read also leaves the agents row n/a, not idle', async ($, on) => {
+    await boot($, on, w => {
+      w.now = T0
+      w.files.set(TRACKER, tracker(...fresh(2)))
+      w.denyRead.add(TRACKER)
+    })
+    const body = squash(cardOf(await paneView($, 89), 'ACTIVITY').body.join(''))
+    expect(body).toContain(squash('agents n/a'))
+    expect(body).not.toContain(squash('agentsidle'))
+  })
+
   test('a corrupt tracker reads n/a and counts one error; a missing hook does not count twice', async ($, on) => {
     const { world, advance } = await boot($, on, w => {
       w.now = T0
