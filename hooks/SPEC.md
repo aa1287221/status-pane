@@ -284,9 +284,9 @@ inferred = read from the bundle or reasoned):
   blocks, blockedBy }`, `id` and `subject` as text, `status` one of `pending`, `in_progress`, `completed`.
 - **Observed here** (the end-to-end probe under Acceptance, 2.1.296): the hook runs on a real compaction with `agentId`
   absent for the main conversation (manual and auto: the block reached the summarizer, which it could not have if the
-  event carried one); `e.file_path` is on a `Write` and a `Read` event as the typings say; `$.state` belongs to the
-  process: `/keeplist` after a `/compact` in the same process prints the record, and in a later `claude -p --continue`
-  process of the same session id says `no compaction seen`.
+  event carried one); `e.file_path` is on a `Write` and a `Read` event as the typings say; `$.state` was not restored
+  into a later process: `/keeplist` after a `/compact` in the same process prints the record, and in a later
+  `claude -p --continue` process of the same session id it says `no compaction seen`.
 - **Specified** (`index.d.ts`, 2.1.296): `precompute` is the one dispatch that installs nothing: its result is kept for
   the next compaction if the conversation still holds what it ran over, and `{ skip }` there computes and keeps
   nothing; `agentId` is absent for the main conversation and present for a subagent's or a fork's; a plugin's own
@@ -363,7 +363,7 @@ What it does:
   `CLAUDE_CODE_PLUGIN_DIRS`. The `keep` and `kept` keys are inert once the code is gone. After a Claude Code upgrade: the
   hub's `session_compact_rewrite` probe and `claude plugin test .` again; the mod API is early access.
 - **Gaps recorded**: the task list of a team or a resumed list; a restarted or resumed session (a new process) starts with no
-  record of the files it wrote or the handoffs it read before, since `$.state` is the process's; files made by `Bash`; append-to-messages (observed to
+  record of the files it wrote or the handoffs it read before (`$.state` was not restored into a later process in the probe); files made by `Bash`; append-to-messages (observed to
   work in `-p`, hub #10) is not in v1, it is the fallback if the TUI check shows the summarizer ignoring the
   instructions; task subjects are the person's own words and reach the summarizer as one cleaned line, not redacted;
   the engine skips a hook that throws (observed in the test kit), so the catch in this one is a choice, not a need.
