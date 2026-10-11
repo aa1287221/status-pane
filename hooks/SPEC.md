@@ -739,6 +739,7 @@ Card     Box width round gray paddingX=1 column               (Section: Box widt
 | 28-7 | tail | `waitingcard.test.ts`: `WAIT N`, `(D due)`, `≥N`; none at 0 or unreadable; first segment; row off or master off gives none |
 | 28-8 | engine, captured bytes | `waitingcard.test.ts`: the producer capture drawn through `boot`; flipping the closer to open brings X back; rows file off reads no side file; CLAUDE_CONFIG_DIR honoured |
 | 28-9 | mutations (run once each, restored) | closed-wins, tie-break, `>=` due, name grammar, host check, exists-first, 16-file cap, control-char rule, link count, row-off gate (collector and tail), 沒有登記 beside down hosts: each turns exactly its named rows red |
+| 28-10 | default on and the opt-out | `model.test.ts`: `waiting` is on for no file, `{}`, a file without the key and `1`; `false` and `0` switch it off. `waitingcard.test.ts`: no rows file and an empty synced dir read `0` with 沒有登記; a rows file without the key keeps the card and the `WAIT 2` segment |
 
 ## Acceptance
 
