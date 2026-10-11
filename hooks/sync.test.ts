@@ -1,15 +1,14 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { EXPECTED_TEXT, FILES, HUB_COMMIT, REF_NOW_MS } from './sync.fixtures'
-import { makeSnap } from './fixture'
+import { boot, cardOf, hintText, makeSnap, mountPane } from './fixture'
 import { parseTogglesStrict, tailText } from './model'
 import { layoutTree, paneLayout } from './pane'
-import { FAKE_ELS, findOverflow, paneParts } from './tree'
+import { FAKE_ELS, findOverflow, paneParts, renderTree } from './tree'
 import type { Node } from './tree'
 import { syncHead, syncHint, syncOf } from './sync'
 import { KINDS, readSideFile } from './sidefile'
 import type { SideIo, SideResult } from './sidefile'
-import { cardOf } from './fixture'
 
 const DIR = '/tmp/claude-side'
 const NOW_SEC = REF_NOW_MS / 1000
@@ -166,10 +165,12 @@ describe('sync-status: headline and tail hint', () => {
     expect(tailText(snapWith(data(0, 3), { sync: false }), REF_NOW_MS, 0)).toBe(tailText(plain, REF_NOW_MS, 0))
   })
 
-  test('the row is opt-in: off by default, on only for the boolean true', () => {
-    expect(parseTogglesStrict('{}')!.rows.sync).toBe(false)
+  test('the row is on by default, and only a falsy value switches it off, as for the other rows', () => {
+    expect(parseTogglesStrict('{}')!.rows.sync).toBe(true)
     expect(parseTogglesStrict('{"sync": true}')!.rows.sync).toBe(true)
-    expect(parseTogglesStrict('{"sync": 1}')!.rows.sync).toBe(false)
+    expect(parseTogglesStrict('{"sync": 1}')!.rows.sync).toBe(true)
+    expect(parseTogglesStrict('{"sync": false}')!.rows.sync).toBe(false)
+    expect(parseTogglesStrict('{"sync": 0}')!.rows.sync).toBe(false)
   })
 })
 
@@ -314,5 +315,58 @@ describe('sync-status: hub fixtures (E2E-01/02)', () => {
     expect(slow.body.join('').replace(/\s/g, '')).toContain('n/a（收集失敗：gitdidnotanswerintime(3sper call'.replace(/\s/g, ''))
     const nulls = await cardFor('sync-status.nulls.json', 89)
     expect(nulls.body.join('\n')).toContain('n/a（無推送紀錄）')
+  })
+})
+
+describe('sync-status: the row through the engine (on by default, opt-out)', () => {
+  const ROWS = '/root/.claude/cc-statusline-rows.json'
+  const SIDE = '/tmp/claude-side/sync-status.json'
+  const behind = FILES['sync-status.behind3.json']!
+
+  /** The cards and the rendered text of one draw of the pane at 89 columns. */
+  const drawn = async ($: Parameters<typeof mountPane>[0]) => {
+    const ui = await mountPane($, 89)
+    const tree = await ui.drawn()
+    await ui.unmount()
+    return { parts: paneParts(tree, 89), text: renderTree(tree, 89).join('\n') }
+  }
+
+  test('on by default: a fresh producer file draws -3 PULL as the last card and leads the tail, with no error', async ($, on) => {
+    await boot($, on, w => {
+      w.now = REF_NOW_MS
+      w.files.delete(ROWS)
+      w.files.set(SIDE, behind)
+    })
+    const { parts, text } = await drawn($)
+    expect(parts.cards.map(c => c.title).slice(-2)).toEqual(['SYSTEM', 'SYNC'])
+    expect(cardOf(parts, 'SYNC').value).toBe('-3 PULL')
+    expect(await hintText($)).toMatch(/^\? for shortcuts\|SYNC -3 PULL/)
+    expect(text).not.toMatch(/\d+ errors?\b/)
+  })
+
+  test('on by default and the producer has written nothing: n/a（缺檔）, no tail segment, one error', async ($, on) => {
+    await boot($, on, w => {
+      w.now = REF_NOW_MS
+      w.files.delete(ROWS)
+    })
+    const { parts, text } = await drawn($)
+    const card = cardOf(parts, 'SYNC')
+    expect(card.value).toBe('')
+    expect(card.body.join('').replace(/\s/g, '')).toBe('n/a（缺檔）')
+    expect(await hintText($)).not.toMatch(/SYNC/)
+    expect(text).toMatch(/1 error\b/)
+  })
+
+  test('"sync": false in the rows file hides the card, the tail and the error, and the side file is never read', async ($, on) => {
+    const { world } = await boot($, on, w => {
+      w.now = REF_NOW_MS
+      w.files.set(ROWS, '{"sync":false}')
+      w.files.set(SIDE, behind)
+    })
+    const { parts, text } = await drawn($)
+    expect(parts.cards.map(c => c.title)).not.toContain('SYNC')
+    expect(await hintText($)).not.toMatch(/SYNC/)
+    expect(text).not.toMatch(/\d+ errors?\b/)
+    expect(world.reads).not.toContain(SIDE)
   })
 })

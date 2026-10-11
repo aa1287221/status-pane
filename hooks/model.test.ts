@@ -410,7 +410,7 @@ describe('#8 row toggles file', () => {
   "history": true, "summaryInterval": 30
 }`
   // `fixture` is opt-in and has its own test below
-  const off = (t: ReturnType<typeof parseToggles>) => Object.entries(t.rows).filter(([k, on]) => !on && k !== 'fixture' && k !== 'sync').map(([k]) => k)
+  const off = (t: ReturnType<typeof parseToggles>) => Object.entries(t.rows).filter(([k, on]) => !on && k !== 'fixture').map(([k]) => k)
 
   test('fixture is the one row that is off until the file turns it on', () => {
     for (const text of [null, '', '{}', REAL_ROWS, '{"fixture":false}', '{"fixture":0}', '{"fixture":""}']) expect(parseToggles(text).rows.fixture).toBe(false)
@@ -425,6 +425,7 @@ describe('#8 row toggles file', () => {
     for (const text of [null, '', '{"enabled":', 'null', '[1]']) {
       const t = parseToggles(text)
       expect(t.enabled).toBe(true)
+      expect(t.rows.sync).toBe(true)
       expect(off(t)).toEqual([])
     }
   })
