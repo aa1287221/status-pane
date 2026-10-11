@@ -10,7 +10,7 @@ import type { Observed } from './compact.observed'
 import type { CompactState, Snap } from './state'
 import { layoutTree, paneLayout } from './pane'
 import type { PaneView } from './pane'
-import { FAKE_ELS, findOverflow, paneParts } from './tree'
+import { FAKE_ELS, findOverflow, isNode, kidsOf, paneParts, textOf } from './tree'
 import type { Node } from './tree'
 import { pctColor } from './model'
 
@@ -112,10 +112,10 @@ const cardAt = (columns: number, used: number, compact: CompactState | null) => 
 }
 
 describe('the CONTEXT card: hint', () => {
-  // R8: at or over the threshold the hint is drawn, under the used row, at each breakpoint
+  // R8: at or over the threshold the alert is drawn, under the used row, at each breakpoint
   for (const columns of [36, 49, 89]) {
-    test(`bodyColumns ${columns}: the threshold figure and /compact are drawn at or over the line, not under it`, () => {
-      expect(cardAt(columns, 500_000, null).card.body.join('\n')).not.toContain('/compact')
+    test(`bodyColumns ${columns}: the alert with the threshold figure and /compact is drawn at or over the line, not under it`, () => {
+      expect(cardAt(columns, 500_000, null).card.body.join('\n')).not.toContain('已達')
       const body = cardAt(columns, 600_000, null).card.body.join('\n')
       expect(body).toContain('60%')
       expect(body).toContain('/compact')
@@ -585,5 +585,91 @@ describe('engine: the compaction window', () => {
     } })
     await measure(250_000)
     expect(SENT.length).toBe(0)
+  })
+})
+
+// ---- the card: the hint is always drawn (the owner on #30: 卡片上永遠顯示門檻提示文字) ----
+
+/** The Text nodes of a drawn card whose own words hold `needle`: one per row a wrapped line takes. */
+const textsHolding = (n: Node, needle: string): Node[] => [
+  ...(n.type === 'Text' && textOf(n).includes(needle) ? [n] : []),
+  ...kidsOf(n)
+    .filter(isNode)
+    .flatMap(k => textsHolding(k, needle)),
+]
+
+describe('the CONTEXT card: the hint is always drawn', () => {
+  // H1: under the line a quiet hint states the threshold; at the line the alert takes its place, never both
+  for (const columns of [36, 49, 89]) {
+    test(`bodyColumns ${columns}: a dim hint under the line, the toned alert at it, one hint at a time and one row for the quiet one`, () => {
+      const under = cardAt(columns, 500_000, null).card
+      expect(under.body.join(' ')).toContain('達 60% 建議 /compact')
+      expect(under.body.join(' ')).not.toMatch(/已達|△/)
+      const quiet = textsHolding(under.node, '/compact')
+      expect(quiet.map(textOf)).toEqual(['達 60% 建議 /compact'])
+      expect(quiet[0]!.props).toMatchObject({ dimColor: true })
+      expect(quiet[0]!.props?.color).toBeUndefined()
+
+      const at = cardAt(columns, 600_000, null).card
+      expect(at.body.join(' ')).toContain('已達 60%')
+      expect(at.body.join(' ').match(/建議/g)).toHaveLength(1)
+      const alert = textsHolding(at.node, '/compact')
+      expect(alert).toHaveLength(1)
+      expect(alert[0]!.props?.color).toBeDefined()
+      expect(alert[0]!.props?.dimColor).toBeUndefined()
+    })
+  }
+
+  // H2: before the first response nothing is known of the usage, and the hint is still the card's
+  test('with no usage yet the quiet hint is there and there is no alert', () => {
+    for (const columns of [36, 49, 89]) {
+      const body = cardAt(columns, 0, null).card.body.join(' ')
+      expect(body).toContain('達 60% 建議 /compact')
+      expect(body).not.toMatch(/已達|△/)
+    }
+  })
+
+  // H3: the figure of the line shows when the window it is taken of is not the one `used` is told against
+  test('a smaller compaction window puts the line\'s own figure in both forms of the hint; the model\'s window does not', () => {
+    for (const columns of [36, 49, 89]) {
+      expect(bodyWin(columns, 100_000, W400K)).toMatch(/達 60% \(240\.0K\) 建議 \/compact/)
+      expect(bodyWin(columns, 250_000, W400K)).toMatch(/已達 60% \(240\.0K\)/)
+      expect(bodyWin(columns, 100_000, undefined)).not.toContain('(')
+      expect(bodyWin(columns, 100_000, { window: 1_000_000, source: 'window' })).not.toContain('(')
+    }
+  })
+
+  // H4: a card that says why it has no usage says only that
+  test('an n/a CONTEXT card carries no hint', () => {
+    for (const columns of [36, 49, 89]) {
+      const view: PaneView = { columns, nowMs: 0, tzMin: 0, raster: true, cpuHist: [], compact: null }
+      const snap = makeSnap({ context: { ok: false, why: 'usage refused' } })
+      const tree = layoutTree(paneLayout(snap, view), FAKE_ELS) as unknown as Node
+      expect(cardOf(paneParts(tree, columns), 'CONTEXT').body).toEqual(['n/a (usage refused)'])
+    }
+  })
+
+  // H5: the mode line tells what the box answered, which only a crossing can have asked
+  test('the mode line stays with the alert: no suggest row under the line', () => {
+    const under = cardAt(89, 500_000, state({ mode: 'suggest', last: { at: 1, isShown: true } })).card.body.join(' ')
+    expect(under).not.toMatch(/suggest|on · shown/)
+    expect(cardAt(89, 650_000, state({ mode: 'suggest', last: { at: 1, isShown: true } })).card.body.join(' ')).toContain('on · shown')
+  })
+
+  // H6: the hint wraps at a narrow card and never runs past it
+  test('no overflow from 22 to 120 columns under the line, with the figure and without', () => {
+    for (let columns = 22; columns <= 120; columns++) {
+      for (const [used, ac] of [[100_000, undefined], [100_000, W400K], [0, W400K]] as const) {
+        const view: PaneView = { columns, nowMs: 0, tzMin: 0, raster: true, cpuHist: [], compact: state({ mode: 'suggest', atPct: 99 }) }
+        const tree = layoutTree(paneLayout(atWin(used, ac), view), FAKE_ELS) as unknown as Node
+        expect(findOverflow(tree, columns)).toEqual([])
+      }
+    }
+  })
+
+  // H7: a threshold set by STATUS_PANE_CTX_AT is the one the hint names once the state holds it
+  test('the hint names the threshold the state holds, quiet and alert', () => {
+    expect(cardAt(89, 100_000, state({ atPct: 75 })).card.body.join(' ')).toContain('達 75% 建議 /compact')
+    expect(cardAt(89, 800_000, state({ atPct: 75 })).card.body.join(' ')).toContain('已達 75%')
   })
 })
