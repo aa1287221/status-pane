@@ -19,6 +19,7 @@ export type RowKey =
   | 'history'
   | 'progress'
   | 'fixture'
+  | 'waiting'
 
 /** `~/.claude/cc-statusline-rows.json`: master switch plus one flag per row (`fixture` is off unless the file turns it on with the boolean true). */
 export type Toggles = { enabled: boolean; rows: Record<RowKey, boolean> }
@@ -57,6 +58,15 @@ export type BgStart = { kind: 'shell' | 'subagent' | 'cron'; at: number; id?: st
 /** Background work for one session: the last Stop snapshot (`seenAt`, null until one arrives) and the starts since. `dropped` is set when the cap evicted a start since the last Stop. */
 export type InflightState = { sid: string; seenAt: number | null; items: BgItem[]; starts: BgStart[]; dropped?: true }
 
+/** One open item on the WAITING board; `sinceSec` is epoch seconds, the age and due flag are drawn at the draw clock. */
+export type WaitingItem = { id: string; host: string; what: string; sinceSec: number }
+
+/** A host whose WAITING file cannot be used; `text` is the reader's `n/a（...）`. */
+export type WaitingDown = { host: string; text: string }
+
+/** The open items (since ascending, at most 100; `openTotal` counts them all), the unreadable hosts, and the files past the 16-file cap. */
+export type WaitingData = { items: WaitingItem[]; openTotal: number; down: WaitingDown[]; skipped: number }
+
 export type CpuSample = { idle: number; total: number }
 
 export type MemInfo = { usedKb: number; totalKb: number; pct: number }
@@ -84,6 +94,8 @@ export type Snap = {
   edited: Res<string[]>
   /** The side file demo card (SCHEMA.md kind `fixture`); absent unless the `fixture` row is on. `observedAtSec` is epoch seconds. */
   fixture?: Res<{ count: number; observedAtSec: number }>
+  /** The WAITING board (SCHEMA.md kind `waiting`); absent unless the `waiting` row is on. */
+  waiting?: Res<WaitingData>
   /** What the settings said of the tracker hooks at this refresh; kept when a later read fails. */
   hooks: HookVerdicts
 }
