@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import type { RenderSurface } from 'claude-code'
 
 import { FILES } from './sidefile.fixtures'
-import { boot, cardOf, makeSnap, mountPane, pair, paneView } from './fixture'
+import { boot, cardOf, makeSnap, mountPane, pair, paneView, pinSyncOff } from './fixture'
 import { fmtClock } from './model'
 import { layoutTree, paneLayout } from './pane'
 import type { Layout } from './pane'
@@ -103,7 +103,7 @@ describe('the fixture card: side file to card through the engine', () => {
   const valid = FILES['fixture.valid.json']!
   const withFile = (text: string | null, rows = '{"fixture":true}') => (w: { files: Map<string, string>; now: number }) => {
     w.now = REF_NOW
-    w.files.set(ROWS_FILE, rows)
+    w.files.set(ROWS_FILE, pinSyncOff(rows))
     if (text !== null) w.files.set(PATH, text)
   }
 
