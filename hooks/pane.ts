@@ -25,6 +25,7 @@ import {
 } from './model'
 import type { Inflight, Progress, Tone } from './model'
 import { DEFAULT_AT, adviceOf, fillOf, modeLabel } from './compact'
+import { keepLabel } from './keeplist'
 import type { CompactState, KeepState } from './state'
 import { ageText } from './sidefile'
 import type { AgentGroup, InflightState, NowState, Res, Snap } from './state'
@@ -376,7 +377,15 @@ const compactRows = (fill: number | null, compact: CompactState | null, inner: n
   return rows
 }
 
-const contextCard = (snap: Snap, width: number, inner: number, compact: CompactState | null): Card => {
+/** The `keep` row of the CONTEXT card: word and value on one row when they fit, else the word, then the value wrapped under it. Nothing without a state or with the mode off. */
+const keepRows = (keep: KeepState | null, inner: number): CardRow[] => {
+  if (!keep || keep.mode === 'off') return []
+  const text = keepLabel(keep)
+  if (dw('keep') + GAP + dw(text) <= inner) return kv('keep', [plain(text)], inner)
+  return [{ kind: 'split', parts: [[dim('keep')]] }, ...wrapWords(text, inner).map((t): CardRow => ({ kind: 'text', line: [plain(t)] }))]
+}
+
+const contextCard = (snap: Snap, width: number, inner: number, compact: CompactState | null, keep: KeepState | null): Card => {
   const r = snap.context
   if (!r.ok) return { id: 'context', width, rows: [titleRow('CONTEXT', null, inner), ...naRows(`n/a (${r.why})`, inner)] }
   const { used, max, compacts } = r.v
@@ -395,6 +404,7 @@ const contextCard = (snap: Snap, width: number, inner: number, compact: CompactS
   }
   const base = r.v.autoCompact?.window ?? max
   rows.push(...compactRows(fillOf({ tokens: used, window: base }), compact, inner, base, max))
+  rows.push(...keepRows(keep, inner))
   return { id: 'context', width, rows }
 }
 
@@ -960,7 +970,7 @@ export const paneLayout = (snap: Snap | null, view: PaneView): Layout => {
           : [['progress'], ['context', '5h', '7d'], ['cost', 'git', 'activity'], ['system'], ['fixture']]
     const build = (id: BandId, width: number): Card => {
       const inner = innerOf(width)
-      if (id === 'context') return contextCard(snap, width, inner, view.compact ?? null)
+      if (id === 'context') return contextCard(snap, width, inner, view.compact ?? null, view.keep ?? null)
       if (id === '5h' || id === '7d') return quotaCard(snap, id, width, inner, c)
       if (id === 'cost') return costCard(snap, width, inner)
       if (id === 'git') return gitCard(snap, width, inner)

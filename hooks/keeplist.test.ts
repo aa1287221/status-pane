@@ -1223,6 +1223,14 @@ describe('the CONTEXT card: the keep row', () => {
     }
   })
 
+  test('a state left by another session is not drawn', async ($, on) => {
+    const { world, compact } = await setup($, on, { edit: withTasks(1) })
+    await compact()
+    expect((await paneView($, 89)).cards.find(c => c.title === 'CONTEXT')?.body.join(' ')).toContain('keep observe')
+    world.session.id = OTHER_SESSION
+    expect((await paneView($, 89)).cards.find(c => c.title === 'CONTEXT')?.body.join(' ')).not.toContain('keep')
+  })
+
   test('with the mode off nothing is written, so the pane has no row', async ($, on) => {
     const { compact } = await setup($, on, { env: { STATUS_PANE_KEEP: '0' }, edit: withTasks(1) })
     await compact()

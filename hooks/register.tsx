@@ -719,7 +719,10 @@ export const register: Register = on => {
       // a Raster is drawn on the terminal only; every other surface gets the text gauge and sparkline
       const raster = e.surface === 'terminal'
       const compact = await read($, compactA).catch(() => null)
-      const layout = paneLayout(snap, { columns: e.props.bodyColumns, nowMs, raster, cpuHist, progress, compact })
+      const kept = await read($, keepA).catch(() => null)
+      // a state left by another session is not this one's
+      const keep = kept && progress.sid.ok && kept.sid === progress.sid.v ? kept : null
+      const layout = paneLayout(snap, { columns: e.props.bodyColumns, nowMs, raster, cpuHist, progress, compact, keep })
       return layoutTree(layout, {
         Box: table.Box,
         Text: table.Text,
