@@ -280,6 +280,8 @@ export const makeWorld = (): World => {
   const files = new Map<string, string>()
   const put = (path: string, text: string) => files.set(path, text)
   put('/root/.claude/CLAUDE.md', '# global')
+  // WAITING is on by default; off here so the panes of tests that are not about it keep their cards
+  put('/root/.claude/cc-statusline-rows.json', '{"waiting":false}')
   put(`${CWD}/CLAUDE.md`, '# project')
   for (const f of ['a.md', 'b.md', 'c.md', 'notes.txt']) put(`${CWD}/.claude/rules/${f}`, 'r')
   put(
