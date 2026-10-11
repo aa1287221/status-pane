@@ -25,7 +25,7 @@ import {
 } from './model'
 import type { Inflight, Progress, Tone } from './model'
 import { DEFAULT_AT, adviceOf, fillOf, modeLabel } from './compact'
-import type { CompactState } from './state'
+import type { CompactState, KeepState } from './state'
 import { ageText } from './sidefile'
 import type { AgentGroup, InflightState, NowState, Res, Snap } from './state'
 
@@ -44,6 +44,8 @@ export type PaneView = {
   progress?: { tools: Res<NowState | null>; sid: Res<string>; inflight?: Res<InflightState | null> }
   /** The /compact state the CONTEXT hint's mode line is drawn from; without it the line is left out. */
   compact?: CompactState | null
+  /** The keep-list state the CONTEXT card's `keep` row is drawn from; without it, or with the mode off, the row is left out. */
+  keep?: KeepState | null
 }
 
 export type CardId = 'header' | 'context' | '5h' | '7d' | 'cost' | 'git' | 'activity' | 'system' | 'progress' | 'fixture' | 'status'

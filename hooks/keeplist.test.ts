@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import type { Engine, On } from 'claude-code/testing'
 
 import { COMPACT_TEXT } from './compact'
-import { SESSION_ID, SID, boot, stallNext } from './fixture'
+import { SESSION_ID, SID, boot, cardOf, makeSnap, paneView, stallNext } from './fixture'
 import type { World } from './fixture'
 import {
   buildKeep,
@@ -21,6 +21,10 @@ import {
   withKeep,
 } from './keeplist'
 import type { KeepConfig, TaskItem } from './keeplist'
+import { layoutTree, paneLayout } from './pane'
+import type { PaneView } from './pane'
+import { FAKE_ELS, findOverflow, isNode, kidsOf, paneParts, textOf } from './tree'
+import type { Node } from './tree'
 import type { KeepLast, KeepState, KeepTrigger, KeptFiles } from './state'
 
 // S1 for the session.compact keep-list: the pure rows first (this file, top), the engine rows below.
@@ -1122,5 +1126,106 @@ describe('engine: /keeplist', () => {
     await run($)
     expect(world.reads.length).toBe(reads)
     expect(world.usageCalls).toBe(usage)
+  })
+})
+
+// ---- the card: the keep row under the CONTEXT hint ----
+
+const CARD_LAST: KeepLast = {
+  at: 1,
+  trigger: 'manual',
+  action: 'pass',
+  why: 'observe',
+  would: 'rewrite',
+  counts: { tasks: 3, files: 4, handoffs: 1 },
+  dropped: 0,
+  gone: 0,
+  chars: 412,
+  text: '',
+  sources: { tasks: '', files: '', handoffs: '' },
+  problems: [],
+}
+const cardState = (over: Partial<KeepState> = {}, last: Partial<KeepLast> = {}): KeepState => ({
+  sid: 'x',
+  mode: 'observe',
+  precompute: 'skip',
+  seen: { manual: 1, auto: 0, plugin: 0, precompute: 0 },
+  last: { ...CARD_LAST, ...last },
+  ...over,
+})
+const contextCard = (columns: number, keep: KeepState | null, snap = makeSnap()) => {
+  const view: PaneView = { columns, nowMs: 0, tzMin: 0, raster: true, cpuHist: [], keep }
+  const tree = layoutTree(paneLayout(snap, view), FAKE_ELS) as unknown as Node
+  return { card: cardOf(paneParts(tree, columns), 'CONTEXT'), tree }
+}
+/** The Text nodes of a drawn card whose own words hold `needle`. */
+const textsHolding = (n: Node, needle: string): Node[] => [
+  ...(n.type === 'Text' && textOf(n).includes(needle) ? [n] : []),
+  ...kidsOf(n)
+    .filter(isNode)
+    .flatMap(k => textsHolding(k, needle)),
+]
+/** The words of the card's body, one space between them wherever a row was wrapped or padded. */
+const words = (columns: number, keep: KeepState | null): string => contextCard(columns, keep).card.body.join(' ').replace(/\s+/g, ' ')
+
+describe('the CONTEXT card: the keep row', () => {
+  // 31-29: after the hint, in full at every breakpoint, only while there is a state and the mode is not off
+  for (const columns of [36, 49, 89]) {
+    test(`bodyColumns ${columns}: the row reads the mode, the trigger and what was found, whole, after the hint`, () => {
+      const text = words(columns, cardState())
+      expect(text).toContain('keep observe · manual · 3 tasks 4 files 1 handoff')
+      expect(text.indexOf('keep observe')).toBeGreaterThan(text.indexOf('/compact'))
+      expect(words(columns, cardState({ mode: 'on' }, { action: 'rewrite', why: 'keep', would: null, trigger: 'auto' }))).toContain('keep on · auto · injected 412 chars')
+      expect(words(columns, cardState({ mode: 'on' }, { action: 'skip', why: 'precompute skipped', would: null, trigger: 'precompute' }))).toContain('keep on · precompute skipped')
+    })
+
+    test(`bodyColumns ${columns}: no state, or the mode off, is no row`, () => {
+      expect(words(columns, null)).not.toContain('keep')
+      expect(words(columns, cardState({ mode: 'off' }))).not.toContain('keep')
+    })
+  }
+
+  test('a card that says why it has no usage carries no keep row either', () => {
+    for (const columns of [36, 49, 89]) {
+      const { card } = contextCard(columns, cardState(), makeSnap({ context: { ok: false, why: 'usage refused' } }))
+      expect(card.body).toEqual(['n/a (usage refused)'])
+    }
+  })
+
+  test('the word keep is dim and the value is not; the hint above is as it was', () => {
+    for (const columns of [36, 49, 89]) {
+      const { card } = contextCard(columns, cardState())
+      const label = textsHolding(card.node, 'keep').filter(n => textOf(n) === 'keep')
+      expect(label).toHaveLength(1)
+      expect(label[0]!.props).toMatchObject({ dimColor: true })
+      const value = textsHolding(card.node, 'handoff')
+      expect(value.length).toBeGreaterThan(0)
+      for (const n of value) expect(n.props?.dimColor).toBeUndefined()
+      expect(card.body.join(' ')).toContain('達 60% 建議 /compact')
+    }
+  })
+
+  test('no overflow from 22 to 120 columns, with a long label, many problems and a 3-digit count', () => {
+    for (let columns = 22; columns <= 120; columns++) {
+      const keep = cardState({}, { counts: { tasks: 15, files: 10, handoffs: 5 }, problems: ['a', 'b', 'c'], trigger: 'precompute' })
+      expect(findOverflow(contextCard(columns, keep).tree, columns)).toEqual([])
+    }
+  })
+
+  // through the engine: the state the hook wrote is what the card draws
+  test('after a compaction the pane shows the row; before one it does not', async ($, on) => {
+    const { compact } = await setup($, on, { edit: withTasks(1) })
+    for (const columns of [36, 49, 89]) expect((await paneView($, columns)).cards.find(c => c.title === 'CONTEXT')?.body.join(' ')).not.toContain('keep')
+    await compact()
+    for (const columns of [36, 49, 89]) {
+      const body = (await paneView($, columns)).cards.find(c => c.title === 'CONTEXT')?.body.join(' ').replace(/\s+/g, ' ')
+      expect(body).toContain('keep observe · manual · 1 task 0 files 0 handoffs')
+    }
+  })
+
+  test('with the mode off nothing is written, so the pane has no row', async ($, on) => {
+    const { compact } = await setup($, on, { env: { STATUS_PANE_KEEP: '0' }, edit: withTasks(1) })
+    await compact()
+    expect((await paneView($, 89)).cards.find(c => c.title === 'CONTEXT')?.body.join(' ')).not.toContain('keep')
   })
 })
