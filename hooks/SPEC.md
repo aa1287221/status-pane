@@ -28,6 +28,8 @@ No `AbovePrompt` band: tw-stock-mod already answers that site without calling `n
   hooks/sidefile.ts            pure reader of the side file contract (hub SCHEMA.md v1): bytes + clock in, a verdict out; `SideIo` is its seam
   hooks/sidefile.fixtures.ts   test-only: embedded copies of the hub's hand-written fixtures (hub commit 6098494)
   hooks/fixture.ts             test-only fake machine; register.tsx never imports it
+  hooks/waiting.ts             WAITING board: name grammar, item rules, merge (7.1), collector, view, tail segment; imports only sidefile and state types
+  hooks/waiting.fixtures.ts    test-only: hub waiting-merge copies (pinned commit, sha256) and the captured producer bytes
   hooks/tree.ts                test-only: reads a drawn tree back as text and cards (shares nothing with pane.ts)
   hooks/*.test.ts              `claude plugin test` suites (`progress.test.ts`: the PROGRESS card and `/progress`; `inflight.test.ts`: its BG and PERM rows)
   hooks/SPEC.md                this file
@@ -236,12 +238,27 @@ refused `exists` or read, a wrong type from the seam, an invalid clock or a host
   grammar), `unknown_kind` (not in the registry, section 9) and `no_clock`.
 - Paths: `local` kinds under `$TMPDIR/claude-side/` (`/tmp` when unset or empty), `synced` under
   `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/-project/references/side-files/`. Only `local` is read by the pane
-  today; there is no directory listing and no multi-host merge (section 7.1) yet.
+  here: `local` kinds by their cards; the `waiting` kind by the WAITING card (below), the only directory listing and multi-host merge.
 - **FIXTURE card** (the proof of the path, kind `fixture`, `$TMPDIR/claude-side/fixture.json`, TTL 600 s): off
   unless the rows file has `"fixture": true`, the boolean only (`1`, `"yes"` leave it off; the only opt-in row: no producer exists on a normal machine). A band
   of its own, last, across the whole width at every tier. Title value and `count`, `age` (at the draw, so it keeps
   counting between refreshes) and `observed` (local clock); any other verdict is the reader's text, wrapped and read
   in full, with no data of the file. A failing fixture counts as one error like any row that is on.
+
+### WAITING card (kind `waiting`, synced, #28)
+
+Off unless the rows file has `"waiting": true` (opt-in until the owner answers question 1 of #28; the flip is one
+line in `OPT_IN`). Reads `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/-project/references/side-files/` after `exists`,
+then `list`: names matching `^waiting\.([A-Za-z0-9][A-Za-z0-9_-]{0,63})\.json$` only, sorted, 16 read at most (the rest
+counted as `skipped`). Each file goes through `readSideFile` (envelope rules and the host-vs-producer check), then the
+SCHEMA 9 item rules; a violation makes that host `n/a（格式錯誤：第 n 筆 …）`. Merge (7.1): closed beats open, then the
+later `updated_at`, then the larger host. Open winners only, since ascending then id, 100 kept, the true total counted.
+Age and due are drawn at the draw clock, never stored: `<1h`, `Nh`, `Nd`; due when strictly more than 604800 s.
+Title: `N`, `N · D due`, `≥N` when a host is unreadable beside items, `0` for a verified-empty board, `—` when nothing is
+readable. Empty and verified-empty draw `沒有登記`; an unreadable host never draws it. 8 items drawn then `+N more`;
+at most 3 unreadable-host rows then `+N hosts n/a`. A refused `list` makes the card one `n/a（目錄無法列出：…）` and
+counts one error. The tail gets `WAIT N`, `WAIT N (D due)` or `WAIT ≥N` first, and none at 0 open items.
+Stale own copies (SCHEMA 5.3 point 6) are not repaired here: the card shows what the synced files say.
 
 ## Files the mod writes (format contract)
 
@@ -712,6 +729,16 @@ Card     Box width round gray paddingX=1 column               (Section: Box widt
 | 60 | the in-flight view | oldest first at the draw clock, three and a count, `ageSec` of the snapshot; empty list is `none`, not n/a; n/a for read failure, session id failure, no snapshot (also starts only) and another session's record |
 | 61 | BG and PERM at the three layouts | bodyColumns 36 / 49 / 89: NOW, `BG` rows, `+N more`, `snapshot` row, then the PERM n/a read in full; none; every n/a keeps its frame; a long label loses its tail, the wait stays; nothing overflows; without `view.progress.inflight` the card is the NOW band alone; `/progress` lines are the card's rows |
 | 62 | in-flight through the engine | a fresh session reads BG n/a; a background `Bash` call then a Stop shows the wait from the call at 36 / 49 / 89 and in `/progress`; the notification row hides it; crons and wakeups; a subagent's Stop and a Stop with neither field change nothing; `turn.complete` does not clear; a non-notification message or another id ends nothing; the three sequences of the #16 review, each without ids (a lower bound `≥`) and with them (the wait of the listed task's own call): a main shell that ended beside a shell a subagent started, a fired `ScheduleWakeup` beside a subagent's `CronCreate`, a flagged `Agent` that ended beside one without the flag; a shell moved to the background by hand is dated by its `backgroundTaskId`; `ScheduleWakeup` with `stop: true` leaves no start and one without it dates its cron; a task listed while its subagent call was still returning is dated by the key at the next Stop; 63 keyed starts after a veto push the veto out, and `dropped` stops the count rule; hidden ids: the 65th hides nothing and exactly one row is left, a notification of another session starts the set over; mutations, each turning a named test red: the notification hook, the `agent_id` guard, `noteBgStart`, the count rule, the other-session check, a keyed match without the kind check (fresh and late-key paths), `dropped` ignored, the veto check removed, keyed starts in the pool, `stop: true` counted as a start, the late key removed, `status` not checked, a subagent call as an unkeyed start, an `Agent` without the flag as nothing, monitor / workflow / other mapped to the shell kind, labels cut with `slice`, the hidden ids not cleared for another session, the hidden-id cap at 63 |
+
+| 28-1 | merge, hub EXPECTED | `waiting.test.ts`: the hub `merged` set and winners at the reference now; closed wins, the larger host wins a tie, due is strictly over 604800 s, 0002 takes the newer text |
+| 28-2 | hub copies | `waiting.test.ts`: each embedded copy matches its pinned sha256 (commit 7b88598); a one-byte edit changes the hash |
+| 28-3 | item rules | `waiting.test.ts`: one case per SCHEMA 9 violation, each n/a with its reason; 200 emoji accepted; unknown keys ignored |
+| 28-4 | name filter and cap | `waiting.test.ts`: `waiting.json`, two-part names and `.tmp` leftovers never opened; 16 read, the rest skipped |
+| 28-5 | AC1 empty states | `waiting.test.ts`: absent dir (list throws ENOENT, still 0), non-matching names, all closed, a truncated host beside an empty one reads `—`, not 0 |
+| 28-6 | card layout and rows | `waitingcard.test.ts`: band of one at 36/49/89 after ACTIVITY, before SYSTEM; DUE at the right edge; `+N more`; `≥N`; `—`; 沒有登記 never beside an unreadable host |
+| 28-7 | tail | `waitingcard.test.ts`: `WAIT N`, `(D due)`, `≥N`; none at 0 or unreadable; first segment; row off or master off gives none |
+| 28-8 | engine, captured bytes | `waitingcard.test.ts`: the producer capture drawn through `boot`; flipping the closer to open brings X back; rows file off reads no side file; CLAUDE_CONFIG_DIR honoured |
+| 28-9 | mutations (run once each, restored) | closed-wins, tie-break, `>=` due, name grammar, host check, exists-first, 16-file cap, control-char rule, link count, row-off gate (collector and tail), 沒有登記 beside down hosts: each turns exactly its named rows red |
 
 ## Acceptance
 
