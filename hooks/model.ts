@@ -1,5 +1,6 @@
 // Pure functions behind status-pane: no $ calls, so every path runs offline.
 
+import { syncHint } from './sync'
 import type { AgentGroup, BgItem, BgKind, BgStart, InflightState, CpuSample, HookVerdicts, McpInfo, MemInfo, NowState, Res, RowKey, Snap, Toggles, ToolRun } from './state'
 
 /** The first line of a failure, less the `<plugin>: $.fs.read: ` the engine puts in front of a refused call. */
@@ -208,6 +209,7 @@ export const ROW_KEYS: readonly RowKey[] = [
   'edited',
   'history',
   'progress',
+  'sync',
   'fixture',
 ]
 
@@ -215,8 +217,8 @@ export const ROW_KEYS: readonly RowKey[] = [
 export const parseToggles = (text: string | null): Toggles =>
   (text === null ? null : parseTogglesStrict(text)) ?? { enabled: true, rows: allOn() }
 
-/** Rows that stay off until the rows file says `true`: they have no producer on a normal machine. */
-const OPT_IN: readonly RowKey[] = ['fixture']
+/** Rows that stay off until the rows file says `true`: they have no producer on a normal machine (sync: until ~/.claude/scripts/hooks/sync-status.py runs there). */
+const OPT_IN: readonly RowKey[] = ['fixture', 'sync']
 
 const allOn = () => Object.fromEntries(ROW_KEYS.map(k => [k, !OPT_IN.includes(k)])) as Record<RowKey, boolean>
 
@@ -577,6 +579,8 @@ const buildTail = (snap: Snap | null, nowMs: number, tzMin?: number): string | n
   }
   if (on.cost && snap.cost.ok) parts.push(`$${snap.cost.v.session.toFixed(2)}`)
   parts.push(staleness(snap.at, nowMs) === 'fresh' ? fmtClock(snap.at, tzMin, false) : 'stale')
+  const sync = syncHint(snap)
+  if (sync !== null) parts.unshift(sync) // the trim below drops from the end
   while (parts.length > 1 && parts.join(TAIL_SEP).length > TAIL_MAX) parts.pop()
   return parts.join(TAIL_SEP)
 }

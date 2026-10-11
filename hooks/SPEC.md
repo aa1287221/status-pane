@@ -28,6 +28,8 @@ No `AbovePrompt` band: tw-stock-mod already answers that site without calling `n
   hooks/sidefile.ts            pure reader of the side file contract (hub SCHEMA.md v1): bytes + clock in, a verdict out; `SideIo` is its seam
   hooks/sidefile.fixtures.ts   test-only: embedded copies of the hub's hand-written fixtures (hub commit 6098494)
   hooks/fixture.ts             test-only fake machine; register.tsx never imports it
+  hooks/sync.ts                SYNC card and tail hint: the reader side of kind `sync-status` (#29)
+  hooks/sync.test.ts, sync.fixtures.ts  tests and embedded fixtures for the SYNC card (test-only)
   hooks/tree.ts                test-only: reads a drawn tree back as text and cards (shares nothing with pane.ts)
   hooks/*.test.ts              `claude plugin test` suites (`progress.test.ts`: the PROGRESS card and `/progress`; `inflight.test.ts`: its BG and PERM rows)
   hooks/SPEC.md                this file
@@ -242,6 +244,8 @@ refused `exists` or read, a wrong type from the seam, an invalid clock or a host
   of its own, last, across the whole width at every tier. Title value and `count`, `age` (at the draw, so it keeps
   counting between refreshes) and `observed` (local clock); any other verdict is the reader's text, wrapped and read
   in full, with no data of the file. A failing fixture counts as one error like any row that is on.
+
+- **SYNC card** (kind `sync-status`, #29, `$TMPDIR/claude-side/sync-status.json`, TTL 900 s): the state of `claude-memory` on `sync-data-v2` against `origin/sync-data-v2`, as the producer `~/.claude/scripts/hooks/sync-status.py` read it from local refs and FETCH_HEAD (no network). Off unless the rows file has `"sync": true` (boolean true only; no producer on a machine until the hook has run there). Headline `✓` in sync, `-N PULL` / `+N PUSH` for one side, `+A -B` (red) when diverged. `behind` is only as new as the last fetch: the card shows `fetched <age>` and draws it yellow after 24 h. A failed or n/a file shows the reader's text in full with no counts; a count outside the §9 integer rules is `n/a（格式錯誤：data.<field> …）`. The tail leads with `SYNC -N PULL`, `SYNC +N PUSH` or `SYNC +A -B PULL` (`999+` above 999) and is left out when in sync or n/a. A n/a SYNC counts as one error when the row is on.
 
 ## Files the mod writes (format contract)
 

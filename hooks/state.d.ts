@@ -18,6 +18,7 @@ export type RowKey =
   | 'edited'
   | 'history'
   | 'progress'
+  | 'sync'
   | 'fixture'
 
 /** `~/.claude/cc-statusline-rows.json`: master switch plus one flag per row (`fixture` is off unless the file turns it on with the boolean true). */
@@ -61,6 +62,9 @@ export type CpuSample = { idle: number; total: number }
 
 export type MemInfo = { usedKb: number; totalKb: number; pct: number }
 
+/** The SYNC card (SCHEMA.md kind `sync-status`, #29): ahead and behind of sync-data-v2 against its last fetch; stamps are epoch seconds or null. */
+export type SyncData = { branch: string; upstream: string; ahead: number; behind: number; lastPushSec: number | null; lastFetchSec: number | null; observedAtSec: number }
+
 /** Everything the pane and the tail draw from; written by one refresh. */
 export type Snap = {
   at: number
@@ -84,6 +88,8 @@ export type Snap = {
   edited: Res<string[]>
   /** The side file demo card (SCHEMA.md kind `fixture`); absent unless the `fixture` row is on. `observedAtSec` is epoch seconds. */
   fixture?: Res<{ count: number; observedAtSec: number }>
+  /** The SYNC card and tail hint; absent unless the `sync` row is on. */
+  sync?: Res<SyncData>
   /** What the settings said of the tracker hooks at this refresh; kept when a later read fails. */
   hooks: HookVerdicts
 }
