@@ -24,7 +24,8 @@ No `AbovePrompt` band: tw-stock-mod already answers that site without calling `n
                                patch line count; formatters; staleness; sid; the progress view (`progressOf`, `progressText`) and the in-flight view (`inflightOf`)
   hooks/pane.ts                pure view: snapshot -> `Layout` (cards as plain data) -> engine elements
                                (`paneLayout`, `layoutTree`); gauge and chart Raster encoders; text fitting
-  hooks/compact.ts             pure: the CONTEXT threshold hint and the /compact suggestion (fill, config, once per crossing, mode label)
+  hooks/compact.ts             pure: the CONTEXT threshold hint and the /compact suggestion (fill, config, the compaction window the line is taken of, once per crossing, mode label)
+  hooks/compact.observed.ts    test-only: what the engine answered for the compaction window in 94 probe runs (Claude Code 2.1.296)
   hooks/state.d.ts             $.state contract and the snapshot types (a hooks/-located contract is accepted)
   hooks/sidefile.ts            pure reader of the side file contract (hub SCHEMA.md v1): bytes + clock in, a verdict out; `SideIo` is its seam
   hooks/sidefile.fixtures.ts   test-only: embedded copies of the hub's hand-written fixtures (hub commit 6098494)
@@ -190,14 +191,54 @@ Stop it reads `BG n/a（還沒有回合結束的快照）`.
 
 ### CONTEXT hint and /compact suggestion (#30)
 
-At or over a threshold the CONTEXT card gets a hint, and `session.measure` can pre-fill `/compact` in the
-box. Source levels (#9 correction applied):
+The CONTEXT card always carries the threshold hint; at or over the threshold it turns into an alert in the fill's
+tone, and `session.measure` can pre-fill `/compact` in the box. Source levels (#9 correction applied; observed =
+a run of 2.1.296, specified = the type file or the settings schema, inferred = read from the source or reasoned):
 
-- **Fill** = `tokens / window`, from the `session.measure` payload (observed: `window` 1000000, `tokens` = the
-  last response's input + cache read + cache creation, #9). `percent` is never used: an integer by inference
-  only (one sample, value 0). The card computes the same ratio from `snap.context.v` (`used / max`).
-- **Threshold** 60%, inclusive (specified: the figure in `~/.claude/commands/壓縮建議.md`), i.e. 600K of 1M.
-  `STATUS_PANE_CTX_AT=<1..99>` (whole numbers only; anything else is 60).
+- **The window the line is taken of** is not `usage().context.window`. That is the model's own window (observed:
+  1000000 for the probed 1M models and 200000 for the 200K ones, whatever the settings say, in `usage()` and in
+  `session.measure`; specified: "the context window of the session's model"). The engine compacts at a window that can
+  be smaller, and `$.session.usage({ breakdown: 'summary' })` reports it as `rawMaxTokens` (observed: 400000 with
+  `modelSettings.claude-opus-5-5.autoCompactWindow` = 400000, auto-compact threshold 367000). A line of 60% of the
+  model's window would sit at 600K, past the point where the engine compacts. So the plugin works out the window from the
+  inputs the engine reads, in the engine's order (`effectiveWindow`; the table `compact.observed.ts` is the engine's answer to
+  94 combinations and the tests replay it):
+  1. `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, read as the engine reads it (observed: a leading integer, `4e5`, `300_000`;
+     `400k` reads 400 and is floored to 100000; `abc`, `0`, `-300000`, `0x30d40` and empty are skipped; floor 100000, cap
+     1000000; `300,000` with a comma is inferred). It comes before the settings, not after them (observed: `250000`
+     over a per-model `400000` gives `250000`).
+  2. The settings, source by source from the highest (`policy`, `flag`, `local`, `project`, `user`; the rank of
+     `policy` is inferred, the other four observed): the first source with a say decides. In one source the entry of
+     the model (`modelSettings.<name>.autoCompactWindow`) beats the top-level `autoCompactWindow`, and a top-level
+     value in a higher source replaces a lower source's entry (observed). `"auto"` for the model stands for the model's
+     window and ends the search (observed). An integer outside 100000..1000000, a float, a string or a top-level
+     `"auto"` is dropped as if absent, and does not reset what is below it (observed). Settings count only while
+     `autoCompactEnabled` is not false in the highest source that names it; the variable counts either way (observed).
+  3. The model's own window.
+
+  The result never exceeds the model's window (observed). The model is matched by its whole canonical name: dated,
+  `[1m]`, Vertex, Bedrock with a region prefix, upper case and spaces all spell one model, and a prefix such as
+  `claude-opus-5` is another (observed; Bedrock without a region prefix inferred). If the window itself is unknown
+  there is no line (null, never 0).
+- **Not mirrored**, each pinned as a known gap by its probe row: an alias key (`opus`, `sonnet`, `haiku`: the engine
+  resolves it to the current default model, observed), `DISABLE_COMPACT` and `DISABLE_AUTO_COMPACT` (the engine
+  turns auto-compact off, observed), a non-boolean `autoCompactEnabled` that voids the whole settings file in the
+  engine (observed), and the account, experiment and model-default sources, which a plugin cannot see (none moved the
+  window on the probed models). The card then takes the configured window. `breakdown.rawMaxTokens` is the engine's own
+  answer to all of it; the calls took 6 to 310 ms in the probe (observed, small sessions), so it is not polled here.
+- **Fill** = `tokens / base`, where `base` is that window and `tokens` is from the `session.measure` payload (observed:
+  `tokens` = the last response's input + cache read + cache creation, #9). `percent` is never used: an integer by
+  inference only (one sample, value 0). The card takes the same ratio of `snap.context.v.used` and
+  `snap.context.v.autoCompact.window`; a snapshot without that field is read against `max` as before. The title's
+  percentage and the gauge stay a share of the model's window, as in `statusline.js`; when the base is smaller, the
+  hint tells the line in tokens (`(240.0K)`) so the two are not confused.
+- **Threshold** 60% of the base, inclusive (specified: the figure in `~/.claude/commands/壓縮建議.md`), i.e. 240K of 400K
+  on this machine and 600K of 1M when nothing sets a window. `STATUS_PANE_CTX_AT=<1..99>` (whole numbers only; anything
+  else is 60). The card names the default 60 until the first measure has written the state.
+- **Where the base is worked out**: `refresh()` stores it on the snapshot (`context.autoCompact`, from the settings it has
+  just read, the variable and the session's model) for the card; the measure works it out afresh (five settings reads, the
+  variable, the model) so that a `/model` or a settings edit since the last refresh is not missed. Any input that cannot
+  be had leaves the model's window.
 - **Trigger**: `session.measure` fires once per main-loop turn (observed, #9); acts only when `changed`
   includes `context`. Usage is re-read per response (inferred only, #9 correction).
 - **Mode** from `STATUS_PANE_CTX_SUGGEST` (specified): unset or other = `observe` (computes, records
@@ -210,11 +251,12 @@ box. Source levels (#9 correction applied):
   shows in a live TUI is NOT observed. The card prints it: `on · shown`, `on · not shown`, `on · pending`.
 - **Gates**: rows file `enabled:false`, the `usage` row off, or no snapshot: nothing is computed or written.
   Every error inside the hook is swallowed; the hook returns `next(e)` untouched (fail-open).
-- **Unobserved**: the compaction window may be smaller than `window` (type file says so), so 60% of `window`
-  may come after the engine's own auto-compact point. Not solved here.
 
-The hint row is at or over the line only; below it the card is as before (path rows 30-7). The rows are
-`△ 已達 N% · 建議 /compact` in the fill's tone, then `suggest <mode>` when a state exists.
+The hint is a row of the CONTEXT card at every moment, under `used` and `compact`: `達 60% 建議 /compact` in dim
+under the line (also before the first response, and with `(240.0K)` after the percentage when the base is smaller than
+the model's window), `△ 已達 60% · 建議 /compact` in the fill's tone at or over it (never both), and then
+`suggest <mode>` when a state exists. A card that says why it has no usage (`n/a (...)`) carries no hint. The
+card mockups and the CONTEXT paragraph above this section predate the hint and show the card without its row.
 
 ## Dependencies
 
@@ -733,8 +775,8 @@ Card     Box width round gray paddingX=1 column               (Section: Box widt
 | 30-4 | config parse | threshold: whole numbers 1..99, else 60; mode `1` suggest, `0` off, anything else observe; no throw |
 | 30-5 | once per crossing | fills 0.55, 0.60, 0.63, 0.70, 0.61, 0.55, 0.62 fire at 0.60 and 0.62 only; another session id starts over |
 | 30-6 | suggestion text | exactly the fixed `COMPACT_TEXT`: `/compact ` prefix, one line, at most 120 cells, no session data |
-| 30-7 | below the line | no hint row under 60%; the 830 existing layout tests stay green (guard) |
-| 30-8 | at the line | hint with `60%` and `/compact` at 36, 49 and 89 columns; under the used row; no new card |
+| 30-7 | below the line | the quiet hint `達 60% 建議 /compact`, dim, one row at 36, 49 and 89 columns, no alert and no mode line; also with no usage yet; a taller CONTEXT card in every golden, pinned body and fixture that has one (the owner's words on #30) |
+| 30-8 | at the line | the alert with `60%` and `/compact` at 36, 49 and 89 columns, in place of the quiet hint and never beside it; under the used row; no new card |
 | 30-9 | mode line | observe, `on · shown`, `on · not shown`, `on · pending`, off; no line without a state |
 | 30-10 | fit | no overflow at 22 to 120 columns, 200K and 1M windows, with a long reason (22: the MIN_W clamp below it predates the card) |
 | 30-11 | engine: observe | default: no `prompt.suggest` call; `last.would` holds the text |
@@ -746,6 +788,16 @@ Card     Box width round gray paddingX=1 column               (Section: Box widt
 | 30-17 | engine: burst | three measures at once: one call |
 | 30-18 | engine: fail-open | env read refused, then state write refused: both resolve, no call |
 | 30-19 | engine: other session | a state of another session is overwritten; its armed flag does not suppress (the other state is served by the fixture's `state.get`, not written beside it) |
+| 30-20 | the engine's answers | the 94 probe runs of `compact.observed.ts` (2.1.296) replayed through `effectiveWindow`: window and source equal the engine's `rawMaxTokens` and `autocompactSource` (env, settings, else the model's window); five rows are known gaps and pin what the plugin answers; a control that most rows shrink the window and that every source the engine named occurs |
+| 30-21 | the variable | unset, empty, spaces, a sign, exponent, thousands marks, a leading integer, `400k` floored, hex and negatives skipped, floor 100000, cap 1000000 |
+| 30-22 | the model's name | dated, `[1m]`, Vertex, Bedrock, upper case and spaces name one model; `claude-opus-5` is not `claude-opus-5-5` |
+| 30-23 | the settings' rules | in one file the entry beats the top-level value, whatever way its key is spelled; a higher top-level value replaces a lower entry; a higher entry beats a lower top-level value; another model's entry is none; `"auto"` ends the search; bounds, floats and strings; two spellings in one file; policy to user in order; junk sources and entries without a throw; an unnamed model takes no entry |
+| 30-24 | the answer | no window is null; never wider than the window; the variable before every source of settings, and a bad variable skipped; `autoCompactEnabled: false` puts the settings aside, the variable stays, the highest source that names it decides; nothing set is the model's window |
+| 30-25 | the card's base | 239,999 of a 400K window is under the line and 240,000 at it, at 36, 49 and 89 columns; the line's figure `(240.0K)` shows only for a smaller window (used reads 250.0K so the figure is the line's own); no override or a snapshot without the field reads as before |
+| 30-26 | the quiet hint | dim, one row (`達 60% 建議 /compact`), alert at the line and never both; with no usage yet; the figure in both forms; an n/a card carries none; the mode line stays with the alert; no overflow from 22 to 120 columns under the line; the threshold of the state (75 reads 75) |
+| 30-27 | engine: the snapshot's window | the settings name 400K; the variable first; nothing set; settings refused with and without the variable; a project's top-level value replaces the user's entry |
+| 30-28 | engine: the measure's window | 250K of 400K sends where 250K of 1M does not; 239,999 one token under, 240,000 at it; observe mode records at the same line; the variable moves the line (150,000 of 250,000); a measure window below the setting is the window (130K of 200K); settings refused falls back to 60% of the model's; the variable refused leaves the settings; another model's entry is not taken; ranked at the measure too |
+| 30-29 | mutations of 30-7 and 30-20 to 30-28 | 34 mutants, each turning a named test red. The window: the settings read before the variable, the model matched by prefix, the top-level value read before the entry (with a non-canonical key), `autoCompactEnabled` ignored, no clamp for the settings, no clamp for the variable, `"auto"` as no entry, no bounds, sources walked lowest first, no floor, `Number()` for the variable, dated names kept, the canonical spelling not winning, an unnamed model taking entries, the window not stored on the snapshot, the measure ignoring the window, the card on the model's window, the variable not read, sources in read order, no settings at the measure, no settings at the refresh, the figure never told, the figure always told, the figure being the window. The hint: none under the line, in a reading colour, beside the alert, naming the default threshold (quiet and alert), with the mode line, without the figure, on an n/a card, worded as reached, wrapped at 12 cells |
 | 49 | reader never throws | refused or throwing `exists`/read, a non-bytes answer, a path or clock that is not valid, empty/blank/BOM, trailing content, NaN, a non-object, 60k-deep nesting, 64 KiB exactly vs one byte more (bytes, not characters), every kind of broken UTF-8, `__proto__` keys; a name outside the grammar or an unregistered kind is not opened |
 | 50 | locations and names | the grammar both ways, `local` and `synced` paths with the TMPDIR / CLAUDE_CONFIG_DIR fallbacks, a name part that would not parse back gives null, the host of a synced name equals `producer.host` |
 | 51 | FIXTURE card at the three layouts | bodyColumns 36 / 49 / 89 (1, 2, 3 across): a card across the whole width, `count`, `age`, `observed`, on every surface; every manifest case is the contract text with no count, age or clock rows and no overflow; a long reason is read to its end; the age follows the draw clock; off by default and switched off by the rows file: no card and the file is never read; a refused read is corrupt and the rest draws; TMPDIR honoured; one error when it fails, none when healthy; the master switch collects nothing |
@@ -780,7 +832,16 @@ Card     Box width round gray paddingX=1 column               (Section: Box widt
   with `STATUS_PANE_CTX_SUGGEST=1 STATUS_PANE_CTX_AT=1`, run one short turn, leave the box empty and idle.
   PASS: after the turn the box shows the grey `/compact focus on ...`, Tab takes it into the box, and the card's
   `suggest` line reads `on · shown`. `on · not shown` or no grey text: record the result on #30 and #9/#31; the
-  feature stays hint-text-only and the default stays observe.
+  feature stays hint-text-only and the default stays observe. With `modelSettings.claude-opus-5-5.autoCompactWindow`
+  = 400000 the CONTEXT card also reads `達 60% (240.0K) 建議 /compact` under the line and `△ 已達 60% (240.0K) · 建議
+  /compact` from 240K tokens on, while its title percentage stays a share of the model's 1.0M.
+- Probe of the #30 line through the real engine (2.1.296; a scratch config dir, a loopback stub API that answers with
+  chosen usage figures, this branch loaded beside a recorder of `prompt.suggest`; not part of the suite). With
+  `STATUS_PANE_CTX_SUGGEST=1` the suggestion goes out of `session.measure` exactly at the line and not a token before:
+  a per-model 400000 sends at 240000 and not at 239999 (and sends at 250000, where no setting does not); the variable
+  250000 sends at 150000 and not at 149999; a project's top-level 300000 over the user's per-model 400000 sends at 180000
+  and not at 179999; no setting sends at 650000 and not at 599999. Every call carried `origin = { kind: "plugin",
+  name: "status-pane" }` and was answered `isShown: false`, as headless has no box.
 - Live probe (main session): loaded through `CLAUDE_CODE_PLUGIN_DIRS`, with the real
   `statusline.js` beside it, the context %, 5h %, 7d % and session cost agree (tokens, duration
   and lines drift while both write the cum file: see above); pane and tail draw at 200 columns,
