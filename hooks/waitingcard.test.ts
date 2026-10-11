@@ -300,6 +300,29 @@ describe('the WAITING card: side files through the engine', () => {
     expect(card.value).toBe('0')
     expect(card.body).toEqual(['沒有登記'])
   })
+
+  test('on by default: with no rows file, an empty synced dir shows 0 and 沒有登記', async ($, on) => {
+    await boot($, on, w => {
+      w.now = REF_NOW
+      w.files.delete(ROWS_FILE)
+    })
+    const parts = await paneView($, 89)
+    expect(parts.cards.map(c => c.title)).toContain('WAITING')
+    expect(cardOf(parts, 'WAITING').value).toBe('0')
+    expect(cardOf(parts, 'WAITING').body).toEqual(['沒有登記'])
+    expect(await hintText($)).not.toContain('WAIT')
+  })
+
+  test('on by default: a rows file that does not name waiting keeps the card and its tail segment', async ($, on) => {
+    await boot($, on, w => {
+      captured(w)
+      w.files.set(ROWS_FILE, '{"summary":true}')
+    })
+    const parts = await paneView($, 89)
+    expect(parts.cards.map(c => c.title)).toContain('WAITING')
+    expect(cardOf(parts, 'WAITING').value).toBe('2')
+    expect(await hintText($)).toContain('WAIT 2')
+  })
 })
 
 // Keep the surfaces list referenced so every surface is covered by the engine tests above.

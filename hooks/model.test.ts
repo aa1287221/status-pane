@@ -410,7 +410,7 @@ describe('#8 row toggles file', () => {
   "history": true, "summaryInterval": 30
 }`
   // `fixture` is opt-in and has its own test below
-  const off = (t: ReturnType<typeof parseToggles>) => Object.entries(t.rows).filter(([k, on]) => !on && k !== 'fixture' && k !== 'waiting').map(([k]) => k)
+  const off = (t: ReturnType<typeof parseToggles>) => Object.entries(t.rows).filter(([k, on]) => !on && k !== 'fixture').map(([k]) => k)
 
   test('fixture is the one row that is off until the file turns it on', () => {
     for (const text of [null, '', '{}', REAL_ROWS, '{"fixture":false}', '{"fixture":0}', '{"fixture":""}']) expect(parseToggles(text).rows.fixture).toBe(false)
@@ -419,6 +419,12 @@ describe('#8 row toggles file', () => {
     for (const text of ['{"fixture":1}', '{"fixture":"yes"}', '{"fixture":"true"}', '{"fixture":[1]}']) expect(parseToggles(text).rows.fixture).toBe(false)
     // a row that is on by default keeps the loose reading: only a falsy value switches it off
     expect(parseToggles('{"cost":1}').rows.cost).toBe(true)
+  })
+
+  test('waiting is on by default and off only for a falsy value in the rows file', () => {
+    for (const text of [null, '{}', REAL_ROWS, '{"summary":true}', '{"waiting":1}']) expect(parseToggles(text).rows.waiting).toBe(true)
+    expect(parseToggles('{"waiting":false}').rows.waiting).toBe(false)
+    expect(parseToggles('{"waiting":0}').rows.waiting).toBe(false)
   })
 
   test('a missing or unreadable file means everything on', () => {
