@@ -78,6 +78,12 @@ describe('keep-list: task files', () => {
     expect(parseTaskFile(taskFile({ subject: `a\nb${LS}c${RLO}d` }))).toMatchObject({ subject: 'a b c d' })
   })
 
+  test('the subject is cut to 100 code points on the way in, an emoji whole', () => {
+    expect((parseTaskFile(taskFile({ subject: 'a'.repeat(150) })) as TaskItem).subject).toBe('a'.repeat(SUBJECT_CAP))
+    expect((parseTaskFile(taskFile({ subject: 'a'.repeat(SUBJECT_CAP) })) as TaskItem).subject).toBe('a'.repeat(SUBJECT_CAP))
+    expect([...(parseTaskFile(taskFile({ subject: cp(0x1f600).repeat(150) })) as TaskItem).subject]).toHaveLength(SUBJECT_CAP)
+  })
+
   test('a finished or deleted task is dropped quietly; every other drop says why and is a problem', () => {
     const drop = (text: string) => parseTaskFile(text) as { drop: string; problem: boolean }
     for (const status of ['completed', 'deleted']) expect(drop(taskFile({ status }))).toMatchObject({ problem: false, drop: expect.stringContaining(status) })
@@ -368,6 +374,14 @@ describe('keep-list: the block', () => {
     expect(got.counts.files).toBeLessThan(10)
     expect(got.dropped).toBe(10 - got.counts.files)
     expect(lines.at(-1)).toBe(`(+${got.dropped} more)`)
+  })
+
+  test('exactly the budget fits; one character more does not, and one item that cannot fit leaves nothing', () => {
+    const lead = `${MARK}\nOpen tasks:\n- #1 [pending] `
+    const one = (n: number) => buildKeep({ tasks: [task('1', 'pending', 'x'.repeat(n))], files: [], handoffs: [] })
+    expect(one(CAP - lead.length)?.text.length).toBe(CAP)
+    expect(one(CAP - lead.length)?.dropped).toBe(0)
+    expect(one(CAP - lead.length + 1)).toBeNull()
   })
 
   test('the cut is exact: the most items that fit are kept, one more is not', () => {
@@ -848,6 +862,20 @@ describe('engine: where the tasks are read from', () => {
     expect(world.reads).not.toContain(`${taskDir()}/50.json`)
     expect(keepOf(world)?.last?.problems.join('\n')).toMatch(/200/)
   })
+
+  // a task file is a few hundred bytes; a bigger one is not read into the hook's memory
+  for (const [bytes, read] of [[65_536, true], [65_537, false]] as const) {
+    test(`a task file of ${bytes} bytes is ${read ? 'read' : 'not read, and told'}`, async ($, on) => {
+      const bare = { id: '2', subject: 'sized', description: '', activeForm: 'a', status: 'pending', blocks: [], blockedBy: [] }
+      const text = JSON.stringify({ ...bare, description: 'x'.repeat(bytes - JSON.stringify(bare).length) })
+      expect(text.length).toBe(bytes)
+      const { world, compact } = await setup($, on, { env: ON, edit: w => { putTask(w, 1); w.files.set(`${taskDir()}/2.json`, text) } })
+      await compact()
+      expect(world.reads.includes(`${taskDir()}/2.json`)).toBe(read)
+      expect(String(SEEN[0]!.instructions).includes('sized')).toBe(read)
+      expect((keepOf(world)?.last?.problems ?? []).join('\n').includes('2.json is too large')).toBe(!read)
+    })
+  }
 
   test('a task file that cannot be read, and one that is not JSON, are told and skipped; the rest is kept', async ($, on) => {
     const { world, compact } = await setup($, on, {

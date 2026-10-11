@@ -482,7 +482,7 @@ export const installWorld = (on: On, world: World): { clock: MockClock; advance:
     const entries: FsEntry[] = []
     for (const path of world.files.keys()) {
       if (dirOf(path) === dir) {
-        entries.push({ name: path.slice(dir.length + 1), kind: 'file', size: 1, mtimeMs: 0, isLink: false })
+        entries.push({ name: path.slice(dir.length + 1), kind: 'file', size: new TextEncoder().encode(world.files.get(path) ?? '').length, mtimeMs: 0, isLink: false })
       }
     }
     return { value: entries }
