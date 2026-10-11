@@ -42,6 +42,23 @@ const LS = cp(0x2028)
 const RLO = cp(0x202e)
 const NUL = cp(0)
 const NEL = cp(0x85)
+// the hidden code points: controls, bidi, separators, zero-width, the BOM, the tag and variation planes; the joiners U+200C and U+200D are not among them
+const HIDDEN_RANGES: readonly (readonly [number, number, string])[] = [
+  [0x00, 0x1f, 'C0 controls'],
+  [0x7f, 0x9f, 'DEL and C1 controls'],
+  [0xad, 0xad, 'soft hyphen'],
+  [0x61c, 0x61c, 'Arabic letter mark'],
+  [0x180e, 0x180e, 'Mongolian vowel separator'],
+  [0x200b, 0x200b, 'zero width space'],
+  [0x200e, 0x200f, 'left-to-right and right-to-left marks'],
+  [0x2028, 0x202e, 'line and paragraph separators, bidi embeddings and overrides'],
+  [0x2060, 0x2064, 'word joiner and invisible operators'],
+  [0x2066, 0x206f, 'bidi isolates and deprecated format controls'],
+  [0xfeff, 0xfeff, 'byte order mark'],
+  [0xfff9, 0xfffb, 'interlinear annotation'],
+  [0xe0000, 0xe007f, 'tag characters'],
+  [0xe0100, 0xe01ef, 'variation selectors supplement'],
+]
 const task = (id: string, status: TaskItem['status'] = 'pending', subject = `task ${id}`): TaskItem => ({ id, status, subject })
 const taskFile = (over: Record<string, unknown> = {}): string =>
   JSON.stringify({ id: '1', subject: 'S', description: 'd', activeForm: 'a', status: 'pending', blocks: [], blockedBy: [], ...over })
@@ -128,6 +145,28 @@ describe('keep-list: cleaning and order', () => {
     }
     expect(sanitize(`  a \n\r\n  ${NUL}${RLO} b  `, SUBJECT_CAP)).toBe('a b')
     expect(sanitize(`${NUL}${LS}`, SUBJECT_CAP)).toBe('')
+  })
+
+  // 31-3: where each hidden range begins and ends, by the table above and not by the code's own
+  test('every hidden range ends where it should: both edges go, and the code point just outside each stays', () => {
+    const hiddenAt = (c: number): boolean => HIDDEN_RANGES.some(([lo, hi]) => c >= lo && c <= hi)
+    const probes = HIDDEN_RANGES.flatMap(([lo, hi, name]): [number, string][] => [
+      [lo, `first of ${name}`],
+      [hi, `last of ${name}`],
+      [lo - 1, `before ${name}`],
+      [hi + 1, `after ${name}`],
+    ]).filter(([c]) => c >= 0)
+    // four per range, but nothing lies before U+0000
+    expect(probes).toHaveLength(4 * HIDDEN_RANGES.length - 1)
+    for (const [c, where] of probes) {
+      const ch = cp(c)
+      const id = [`U+${c.toString(16).toUpperCase().padStart(4, '0')}`, where]
+      // a hidden code point and a blank both fold into the one space between their neighbours; anything else stays as it is
+      const folds = hiddenAt(c) || /\s/.test(ch)
+      expect([...id, sanitize(`a${ch}b`, SUBJECT_CAP)]).toEqual([...id, folds ? 'a b' : `a${ch}b`])
+      // a recorded path takes a blank and refuses a hidden code point, which tells the two apart where `sanitize` cannot
+      expect([...id, recordPath(null, 'sid', 'Write', `/p/a${ch}b.ts`) === null]).toEqual([...id, hiddenAt(c)])
+    }
   })
 
   test('the cap counts code points: an emoji is never cut in two', () => {
