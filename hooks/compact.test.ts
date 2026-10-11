@@ -2,8 +2,12 @@ import { describe, expect, test } from 'claude-code/testing'
 import type { Engine, On } from 'claude-code/testing'
 
 import { boot, cardOf, makeSnap, makeWorld } from './fixture'
-import { COMPACT_TEXT, adviceOf, compactConfig, fillOf, shouldSuggest } from './compact'
-import type { CompactState } from './state'
+import type { World } from './fixture'
+import { COMPACT_TEXT, adviceOf, canonModel, compactConfig, effectiveWindow, envWindow, fillOf, settingsWindow, shouldSuggest } from './compact'
+import type { WindowSource } from './compact'
+import { OBSERVED } from './compact.observed'
+import type { Observed } from './compact.observed'
+import type { CompactState, Snap } from './state'
 import { layoutTree, paneLayout } from './pane'
 import type { PaneView } from './pane'
 import { FAKE_ELS, findOverflow, paneParts } from './tree'
@@ -147,7 +151,7 @@ describe('the CONTEXT card: hint', () => {
 const SENT: { text: string }[] = []
 
 /** Registers the bottom of the chain (what the engine answers) before boot; `isShown` is what the box reports. */
-const setup = async ($: Engine, on: On, opts: { env?: Record<string, string>; isShown?: boolean; throws?: boolean; seed?: CompactState; rows?: string } = {}) => {
+const setup = async ($: Engine, on: On, opts: { env?: Record<string, string>; isShown?: boolean; throws?: boolean; seed?: CompactState; rows?: string; edit?: (w: World) => void } = {}) => {
   SENT.length = 0
   on('session.measure', (_c, e) => ({ changed: e.changed }) as never)
   on('prompt.suggest', (_c, e) => {
@@ -160,10 +164,11 @@ const setup = async ($: Engine, on: On, opts: { env?: Record<string, string>; is
     // readOnce is what the fixture's state.get handler answers; stateValues is only a record of writes
     if (opts.seed) w.readOnce.set('compact', opts.seed)
     if (opts.rows) w.files.set(ROWS_FILE, opts.rows)
+    opts.edit?.(w)
   })
   // the box answers after the hook returns; settle lets that answer land before the test reads the state
-  const measure = async (tokens: number, changed = ['context']) => {
-    const r = await ($.session as unknown as { measure: (i: unknown) => Promise<unknown> }).measure({ context: { tokens, window: 1_000_000, percent: 0 }, rateLimits: [], changed })
+  const measure = async (tokens: number, changed = ['context'], window = 1_000_000) => {
+    const r = await ($.session as unknown as { measure: (i: unknown) => Promise<unknown> }).measure({ context: { tokens, window, percent: 0 }, rateLimits: [], changed })
     await io.clock.settle()
     return r
   }
@@ -268,5 +273,292 @@ describe('engine: the measure hook', () => {
     expect(world.readOnce.has('compact')).toBe(false)
     expect(SENT.length).toBe(1)
     expect(stateOf(world)?.sid).toBe(T_SID)
+  })
+})
+
+// ---- the window the line is taken of: what the engine compacts at, not the model's whole window ----
+
+const OPUS = 'claude-opus-5-5'
+const pm = (key: string, v: unknown) => ({ modelSettings: { [key]: { autoCompactWindow: v } } })
+/** The sources as the resolver takes them: highest precedence first, policy down to user. */
+const ranked = (r: { user?: unknown; project?: unknown; local?: unknown; flag?: unknown; policy?: unknown }): unknown[] => [r.policy ?? {}, r.flag ?? {}, r.local ?? {}, r.project ?? {}, r.user ?? {}]
+const labelOf = (engine: string): WindowSource => (engine === 'env' || engine === 'settings' ? engine : 'window')
+const ask = (r: Observed) => effectiveWindow({ window: r.window, model: r.model, env: r.env, sources: ranked(r) })
+
+describe('compact window: the engine\'s own answers (Claude Code 2.1.296)', () => {
+  // W1: a table whose rows all leave the window alone would pass a resolver that does nothing
+  test('the table has teeth: most rows shrink the window and the engine named every source', () => {
+    expect(OBSERVED.length).toBeGreaterThanOrEqual(90)
+    expect(OBSERVED.filter(r => !r.gap && r.want < r.window).length).toBeGreaterThanOrEqual(50)
+    expect([...new Set(OBSERVED.map(r => r.engine))].sort()).toEqual(['auto', 'env', 'model-default', 'settings', 'unknown-model'])
+  })
+
+  // W2: every probe run, one test each; the known gaps pin what the plugin answers instead
+  for (const r of OBSERVED) {
+    test(r.gap ? `${r.id} (known gap)` : r.id, () => {
+      const got = ask(r)
+      if (r.gap) expect(got).toEqual({ window: r.mine!, source: r.mine! < r.window ? 'settings' : 'window' })
+      else expect(got).toEqual({ window: r.want, source: labelOf(r.engine) })
+    })
+  }
+})
+
+describe('compact window: the environment variable', () => {
+  // W3: the engine's own number parser, then the bounds; a value it cannot read is skipped, never 0
+  test('read as the engine reads it: leading integer, exponent, thousands marks, floor 100000, cap 1000000', () => {
+    // observed on 2.1.296 except the three marked inferred (read from the source, not run)
+    const cases: [string | undefined, number | null][] = [
+      [undefined, null], ['', null], ['250000', 250_000], [' 300000', 300_000], ['300000 ', 300_000], ['+300000', 300_000],
+      ['50000', 100_000], ['400k', 100_000], ['2000000', 1_000_000], ['999999999999999999', 1_000_000],
+      ['400000abc', 400_000], ['300000.9', 300_000], ['4e5', 400_000], ['1e6', 1_000_000], ['300_000', 300_000],
+      ['abc', null], ['0', null], ['-300000', null], ['0x30d40', null],
+      ['300,000', 300_000], // inferred
+      [' 300000 ', 300_000], // inferred
+      ['1e400', null], // inferred
+    ]
+    for (const [raw, want] of cases) expect([raw, envWindow(raw)]).toEqual([raw, want])
+  })
+})
+
+describe('compact window: the model\'s name', () => {
+  // W4: the settings key is the whole canonical name, whatever way the session spells it
+  test('dated, [1m], Vertex, Bedrock, upper case and spaces name one model; a prefix is another', () => {
+    const spellings = ['claude-opus-5-5', 'Claude-Opus-5-5', ' claude-opus-5-5 ', 'claude-opus-5-5[1m]', ' Claude-Opus-5-5[1M] ', 'claude-opus-5-5-20260101', 'claude-opus-5-5@20260101', 'us.anthropic.claude-opus-5-5-20260101-v1:0']
+    for (const s of spellings) expect([s, canonModel(s)]).toEqual([s, OPUS])
+    expect(canonModel('claude-opus-5')).toBe('claude-opus-5')
+    expect(canonModel('claude-sonnet-4-5-20250929')).toBe('claude-sonnet-4-5')
+  })
+})
+
+describe('compact window: the settings', () => {
+  // W5: the rules of the engine's merge, one named test each
+  test('within one file the entry for the model beats the top-level value', () => {
+    expect(settingsWindow([{ autoCompactWindow: 300_000, ...pm(OPUS, 400_000) }], OPUS)).toBe(400_000)
+  })
+
+  test('a higher source\'s top-level value replaces a lower source\'s entry for the model', () => {
+    expect(settingsWindow([{ autoCompactWindow: 300_000 }, pm(OPUS, 400_000)], OPUS)).toBe(300_000)
+  })
+
+  test('a higher source\'s entry beats a lower source\'s top-level value, and another model\'s entry is no entry', () => {
+    expect(settingsWindow([pm(OPUS, 400_000), { autoCompactWindow: 300_000 }], OPUS)).toBe(400_000)
+    expect(settingsWindow([pm('claude-opus-5', 350_000), pm(OPUS, 400_000)], OPUS)).toBe(400_000)
+    expect(settingsWindow([pm('claude-opus-5', 350_000)], OPUS)).toBeNull()
+  })
+
+  test('"auto" for the model is the engine\'s own window: it neither falls through to a lower source nor to the top-level value', () => {
+    expect(settingsWindow([pm(OPUS, 'auto'), pm(OPUS, 400_000)], OPUS)).toBe('auto')
+    expect(settingsWindow([{ autoCompactWindow: 300_000, ...pm(OPUS, 'auto') }], OPUS)).toBe('auto')
+  })
+
+  test('only integers from 100000 to 1000000 count; "auto" counts for a model and nowhere else; a bad value is as if absent', () => {
+    const top = (v: unknown) => settingsWindow([{ autoCompactWindow: v }], OPUS)
+    expect([99_999, 1_000_001, 400_000.5, '400000', 'auto', null, true, [400_000], { n: 1 }].map(top)).toEqual(Array(9).fill(null))
+    expect([100_000, 1_000_000].map(top)).toEqual([100_000, 1_000_000])
+    const one = (v: unknown) => settingsWindow([pm(OPUS, v)], OPUS)
+    expect([99_999, 1_000_001, 400_000.5, '400000', 'x', null].map(one)).toEqual(Array(6).fill(null))
+    // an absent value does not reset what is below it
+    expect(settingsWindow([{ autoCompactWindow: 50_000 }, pm(OPUS, 400_000)], OPUS)).toBe(400_000)
+  })
+
+  test('two spellings of the model in one file: the canonical key wins, else the first', () => {
+    expect(settingsWindow([{ modelSettings: { 'claude-opus-5-5[1m]': { autoCompactWindow: 300_000 }, [OPUS]: { autoCompactWindow: 400_000 } } }], OPUS)).toBe(400_000)
+    expect(settingsWindow([{ modelSettings: { 'claude-opus-5-5[1m]': { autoCompactWindow: 300_000 }, 'Claude-Opus-5-5': { autoCompactWindow: 400_000 } } }], OPUS)).toBe(300_000)
+  })
+
+  test('policy outranks flag, local, project and user, in that order', () => {
+    const win = (v: number) => ({ autoCompactWindow: v })
+    expect(settingsWindow([win(1e5), win(2e5), win(3e5), win(4e5), win(5e5)], OPUS)).toBe(1e5)
+    expect(settingsWindow([{}, win(2e5), win(3e5), win(4e5), win(5e5)], OPUS)).toBe(2e5)
+    expect(settingsWindow([{}, {}, win(3e5), win(4e5), win(5e5)], OPUS)).toBe(3e5)
+    expect(settingsWindow([{}, {}, {}, win(4e5), win(5e5)], OPUS)).toBe(4e5)
+    expect(settingsWindow([{}, {}, {}, {}, win(5e5)], OPUS)).toBe(5e5)
+  })
+
+  test('junk is skipped without a throw: sources that are not objects, modelSettings that is not, entries that are not', () => {
+    const junk: unknown[] = [null, undefined, 7, 'x', [1], { modelSettings: [1, 2] }, { modelSettings: { [OPUS]: 400_000 } }, { modelSettings: { [OPUS]: null } }, { modelSettings: null }]
+    expect(settingsWindow(junk, OPUS)).toBeNull()
+    expect(settingsWindow([...junk, pm(OPUS, 400_000)], OPUS)).toBe(400_000)
+    expect(settingsWindow([pm(OPUS, 400_000)], undefined)).toBeNull()
+    expect(settingsWindow([{ autoCompactWindow: 300_000 }], undefined)).toBe(300_000)
+  })
+})
+
+describe('compact window: the answer', () => {
+  const sources = [{}, {}, {}, {}, { autoCompactWindow: 400_000 }]
+
+  // W6: unknown stays unknown
+  test('no window is no answer, never 0 or NaN', () => {
+    for (const window of [undefined, 0, -1, Number.NaN, Infinity]) expect(effectiveWindow({ window, model: OPUS, env: '250000', sources })).toBeNull()
+  })
+
+  // W7: the engine's min(window, configured)
+  test('never wider than the model\'s window', () => {
+    expect(effectiveWindow({ window: 200_000, model: OPUS, env: undefined, sources })).toEqual({ window: 200_000, source: 'settings' })
+    expect(effectiveWindow({ window: 200_000, model: OPUS, env: '900000', sources: [] })).toEqual({ window: 200_000, source: 'env' })
+  })
+
+  // W8: the environment is read before the settings, whichever way the settings point
+  test('the environment variable beats every source of settings', () => {
+    expect(effectiveWindow({ window: 1_000_000, model: OPUS, env: '250000', sources: [pm(OPUS, 150_000), ...sources] })).toEqual({ window: 250_000, source: 'env' })
+    expect(effectiveWindow({ window: 1_000_000, model: OPUS, env: 'abc', sources })).toEqual({ window: 400_000, source: 'settings' })
+  })
+
+  // W9: settings count only while auto-compact is on; the environment variable counts either way
+  test('autoCompactEnabled false in the deciding source puts the settings aside; the highest source that names it decides', () => {
+    const off = { autoCompactEnabled: false }
+    expect(effectiveWindow({ window: 1_000_000, model: OPUS, env: undefined, sources: [{}, {}, {}, off, { autoCompactWindow: 300_000 }] })).toEqual({ window: 1_000_000, source: 'window' })
+    expect(effectiveWindow({ window: 1_000_000, model: OPUS, env: '250000', sources: [{}, {}, {}, off, { autoCompactWindow: 300_000 }] })).toEqual({ window: 250_000, source: 'env' })
+    expect(effectiveWindow({ window: 1_000_000, model: OPUS, env: undefined, sources: [{}, {}, {}, { autoCompactEnabled: true }, { ...off, autoCompactWindow: 300_000 }] })).toEqual({ window: 300_000, source: 'settings' })
+  })
+
+  test('nothing set is the model\'s window', () => {
+    expect(effectiveWindow({ window: 1_000_000, model: OPUS, env: undefined, sources: [] })).toEqual({ window: 1_000_000, source: 'window' })
+    expect(effectiveWindow({ window: 1_000_000, model: undefined, env: undefined, sources: [pm(OPUS, 400_000)] })).toEqual({ window: 1_000_000, source: 'window' })
+  })
+})
+
+// ---- the card: the line is a share of that window ----
+
+const atWin = (used: number, autoCompact?: { window: number; source: WindowSource }, max = 1_000_000) =>
+  makeSnap({ context: { ok: true, v: { pct: Math.round((used / max) * 100), used, max, compacts: { ok: true, v: 1 }, ...(autoCompact ? { autoCompact } : {}) } } })
+const bodyWin = (columns: number, used: number, autoCompact?: { window: number; source: WindowSource }): string => {
+  const view: PaneView = { columns, nowMs: 0, tzMin: 0, raster: true, cpuHist: [], compact: null }
+  const tree = layoutTree(paneLayout(atWin(used, autoCompact), view), FAKE_ELS) as unknown as Node
+  return cardOf(paneParts(tree, columns), 'CONTEXT').body.join(' ')
+}
+const W400K = { window: 400_000, source: 'settings' as const }
+
+describe('the CONTEXT card: the compaction window', () => {
+  // W10: 240,000 of a 400K window is the line, though it is 24% of the model's 1M
+  for (const columns of [36, 49, 89]) {
+    test(`bodyColumns ${columns}: 239,999 of a 400K window is under the line, 240,000 is at it, and the figure says which window`, () => {
+      expect(bodyWin(columns, 239_999, W400K)).not.toContain('已達')
+      const at = bodyWin(columns, 240_000, W400K)
+      expect(at).toContain('已達 60%')
+      expect(at).toContain('240.0K')
+    })
+  }
+
+  // W11: with no window of its own the card reads as it did
+  test('no override, or a snapshot without the field: the line is 60% of the model\'s window and carries no figure', () => {
+    for (const ac of [undefined, { window: 1_000_000, source: 'window' as const }]) {
+      expect(bodyWin(89, 599_999, ac)).not.toContain('已達')
+      const at = bodyWin(89, 600_000, ac)
+      expect(at).toContain('已達 60%')
+      expect(at).not.toMatch(/\d\.\dK\)|\(/)
+    }
+  })
+})
+
+// ---- the engine: the window comes from the settings and the environment through the fake machine ----
+
+const snapOf = (w: World): Snap | undefined => w.stateValues.get('snap') as Snap | undefined
+const autoCompactOf = (w: World) => {
+  const c = snapOf(w)?.context
+  return c?.ok ? c.v.autoCompact : undefined
+}
+
+describe('engine: the compaction window', () => {
+  const SUGGEST = { STATUS_PANE_CTX_SUGGEST: '1' }
+  const user400k = (w: World) => {
+    w.settingsBySource.user = pm(OPUS, 400_000)
+  }
+
+  // W12: the snapshot, as refresh reads the settings, the environment and the session's model
+  test('the snapshot holds the window the settings name for the session\'s model', async ($, on) => {
+    const { world } = await setup($, on, { edit: user400k })
+    expect(autoCompactOf(world)).toEqual({ window: 400_000, source: 'settings' })
+  })
+
+  test('the environment variable is read before the settings', async ($, on) => {
+    const { world } = await setup($, on, { env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '250000' }, edit: user400k })
+    expect(autoCompactOf(world)).toEqual({ window: 250_000, source: 'env' })
+  })
+
+  test('nothing set is the model\'s window', async ($, on) => {
+    const plain = await setup($, on)
+    expect(autoCompactOf(plain.world)).toEqual({ window: 1_000_000, source: 'window' })
+  })
+
+  test('settings refused: the model\'s window, or the variable when it is set', async ($, on) => {
+    const { world } = await setup($, on, { env: { CLAUDE_CODE_AUTO_COMPACT_WINDOW: '250000' }, edit: w => { w.denySettings = true } })
+    expect(autoCompactOf(world)).toEqual({ window: 250_000, source: 'env' })
+  })
+
+  // W13: the discriminating pair: 250K is 62.5% of 400K and 25% of 1M
+  test('a 400K compaction window: 250K tokens sends the suggestion', async ($, on) => {
+    const { measure } = await setup($, on, { env: SUGGEST, edit: user400k })
+    await measure(250_000)
+    expect(SENT.map(s => s.text)).toEqual([COMPACT_TEXT])
+  })
+
+  test('control: the same 250K with no setting is 25% and sends nothing', async ($, on) => {
+    const { measure } = await setup($, on, { env: SUGGEST })
+    await measure(250_000)
+    expect(SENT.length).toBe(0)
+  })
+
+  test('the line is 240,000 of 400,000: one token under sends nothing, the line itself sends', async ($, on) => {
+    const { measure } = await setup($, on, { env: SUGGEST, edit: user400k })
+    await measure(239_999)
+    expect(SENT.length).toBe(0)
+    await measure(240_000)
+    expect(SENT.length).toBe(1)
+  })
+
+  test('observe mode records what it would send at the same line', async ($, on) => {
+    const { world, measure } = await setup($, on, { edit: user400k })
+    await measure(239_999)
+    expect(stateOf(world)?.last).toBeNull()
+    await measure(240_000)
+    expect(stateOf(world)?.last?.would).toBe(COMPACT_TEXT)
+  })
+
+  test('the environment variable moves the line: 150,000 of 250,000, and the setting below it is not read', async ($, on) => {
+    const { measure } = await setup($, on, { env: { ...SUGGEST, CLAUDE_CODE_AUTO_COMPACT_WINDOW: '250000' }, edit: user400k })
+    await measure(149_999)
+    expect(SENT.length).toBe(0)
+    await measure(150_000)
+    expect(SENT.length).toBe(1)
+  })
+
+  test('a window the measure reports below the setting is the window: 130K of 200K sends', async ($, on) => {
+    const { measure } = await setup($, on, { env: SUGGEST, edit: user400k })
+    await measure(130_000, ['context'], 200_000)
+    expect(SENT.length).toBe(1)
+  })
+
+  // W14: fail-open to the model's window when an input cannot be had
+  test('settings refused: the line falls back to 60% of the model\'s window', async ($, on) => {
+    const { measure } = await setup($, on, { env: SUGGEST, edit: w => { w.denySettings = true } })
+    await measure(250_000)
+    expect(SENT.length).toBe(0)
+    await measure(600_000)
+    expect(SENT.length).toBe(1)
+  })
+
+  test('the variable refused: the settings decide', async ($, on) => {
+    const { measure } = await setup($, on, {
+      env: { ...SUGGEST, CLAUDE_CODE_AUTO_COMPACT_WINDOW: '250000' },
+      edit: w => {
+        user400k(w)
+        w.denyEnv.add('CLAUDE_CODE_AUTO_COMPACT_WINDOW')
+      },
+    })
+    // 200K is 80% of the variable's 250K but 50% of the setting's 400K
+    await measure(200_000)
+    expect(SENT.length).toBe(0)
+    await measure(250_000)
+    expect(SENT.length).toBe(1)
+  })
+
+  test('the session\'s model decides: another model\'s entry is not taken', async ($, on) => {
+    const { measure } = await setup($, on, { env: SUGGEST, edit: w => {
+      user400k(w)
+      w.session.model = 'claude-opus-5'
+    } })
+    await measure(250_000)
+    expect(SENT.length).toBe(0)
   })
 })

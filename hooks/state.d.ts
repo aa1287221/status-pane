@@ -83,7 +83,8 @@ export type Snap = {
   model: Res<{ name: string; version: string; effort: string | null; configured?: boolean }>
   cost: Res<{ all: number; session: number; durMin: number }>
   agents: Res<AgentGroup[]>
-  context: Res<{ pct: number | null; used: number; max: number; compacts: Res<number> }>
+  /** `max` is the model's window. `autoCompact` is the window the engine compacts at when settings or the environment set one, else `max`; a snapshot older than this field has none. */
+  context: Res<{ pct: number | null; used: number; max: number; compacts: Res<number>; autoCompact?: { window: number; source: 'env' | 'settings' | 'window' } }>
   tokens: Res<{ all: number; session: number }>
   quota: Res<{ five: QuotaWindow; seven: QuotaWindow }>
   cpu: Res<number | null>

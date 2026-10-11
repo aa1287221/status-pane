@@ -50,3 +50,17 @@ export const modeLabel = (c: CompactState): string => {
   if (c.last?.isShown === false) return 'on · not shown'
   return 'on · pending'
 }
+
+/** The engine's bounds for an auto-compact window: a value outside them is dropped (100000 and 1000000 stand). */
+export const WINDOW_MIN = 100_000
+export const WINDOW_MAX = 1_000_000
+
+export type WindowSource = 'env' | 'settings' | 'window'
+export type EffectiveWindow = { window: number; source: WindowSource }
+
+// Stubs that keep the model's window; the resolver replaces them.
+export const envWindow = (_raw: string | undefined): number | null => null
+export const canonModel = (name: string): string => name
+export const settingsWindow = (_sources: readonly unknown[], _model: string | undefined): number | 'auto' | null => null
+export const effectiveWindow = (a: { window: number | undefined; model: string | undefined; env: string | undefined; sources: readonly unknown[] }): EffectiveWindow | null =>
+  typeof a.window === 'number' && Number.isFinite(a.window) && a.window > 0 ? { window: a.window, source: 'window' } : null
