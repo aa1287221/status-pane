@@ -157,7 +157,8 @@ const setup = async ($: Engine, on: On, opts: { env?: Record<string, string>; is
   })
   const io = await boot($, on, w => {
     Object.assign(w.env, opts.env ?? {})
-    if (opts.seed) w.stateValues.set('compact', opts.seed)
+    // readOnce is what the fixture's state.get handler answers; stateValues is only a record of writes
+    if (opts.seed) w.readOnce.set('compact', opts.seed)
     if (opts.rows) w.files.set(ROWS_FILE, opts.rows)
   })
   // the box answers after the hook returns; settle lets that answer land before the test reads the state
@@ -225,6 +226,14 @@ describe('engine: the measure hook', () => {
     expect(SENT.length).toBe(0)
   })
 
+  // E6: the usage row is the CONTEXT card's switch; with it off there is no card to hint on
+  test('usage row off: no state write, no suggest', async ($, on) => {
+    const { world, measure } = await setup($, on, { env: { STATUS_PANE_CTX_SUGGEST: '1' }, rows: '{"usage":false}' })
+    await measure(650_000)
+    expect(world.stateSets).not.toContain('compact')
+    expect(SENT.length).toBe(0)
+  })
+
   // E6: bypass and master switch
   test('STATUS_PANE_CTX_SUGGEST=0 sends nothing and the card still hints', async ($, on) => {
     const { world, measure } = await setup($, on, { env: { STATUS_PANE_CTX_SUGGEST: '0' } })
@@ -253,8 +262,11 @@ describe('engine: the measure hook', () => {
 
   // E9: a state of another session is treated as empty
   test('a compact state of another session is overwritten, and its armed flag does not suppress', async ($, on) => {
-    const { measure } = await setup($, on, { env: { STATUS_PANE_CTX_SUGGEST: '1' }, seed: state({ sid: 'OTHER', armed: false }) })
+    const { world, measure } = await setup($, on, { env: { STATUS_PANE_CTX_SUGGEST: '1' }, seed: state({ sid: 'OTHER', armed: false }) })
     await measure(650_000)
+    // the seed was read by the hook, not left waiting for a read that never came
+    expect(world.readOnce.has('compact')).toBe(false)
     expect(SENT.length).toBe(1)
+    expect(stateOf(world)?.sid).toBe(T_SID)
   })
 })
