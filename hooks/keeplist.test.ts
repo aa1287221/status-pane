@@ -1109,6 +1109,23 @@ describe('engine: the record of what the session wrote', () => {
     expect(wrote(world, 'kept')).toBe(false)
   })
 
+  // 31-37: the two switches are for the compaction; the record of what the session wrote is made whatever they say
+  const SWITCHED_OFF: [string, Record<string, string>, (w: World) => void][] = [
+    ['STATUS_PANE_KEEP=0', { STATUS_PANE_KEEP: '0' }, () => undefined],
+    ['the rows file switched off', ON, w => void w.files.set(`${CFG_DIR}/cc-statusline-rows.json`, '{"enabled":false}')],
+  ]
+  for (const [name, env, off] of SWITCHED_OFF) {
+    test(`${name}: a Write and a Read of a handoff are still recorded, while a compaction is left as it came`, async ($, on) => {
+      const { world, compact } = await setup($, on, { env, edit: w => { putTask(w, 1); off(w) } })
+      await $.tool.call({ tool: 'Write', file_path: '/root/project/new.ts', content: 'x' })
+      await $.tool.call(READ('/root/memory/handoff-x.md'))
+      expect(keptOf(world)).toEqual({ sid: SID, files: ['/root/project/new.ts'], handoffs: ['/root/memory/handoff-x.md'] })
+      await compact({ instructions: 'CMD' })
+      expect(SEEN[0]!.instructions).toBe('CMD')
+      expect(wrote(world, 'keep')).toBe(false)
+    })
+  }
+
   // 31-28: a compaction takes the calls out of the transcript, so the record is kept beside it
   test('the record outlives a compaction and grows; another session starts over', async ($, on) => {
     const { world, compact } = await setup($, on, { env: ON, edit: w => { for (const f of ['a', 'b', 'c', 'd']) w.files.set(`/root/project/${f}.ts`, 'x') } })
