@@ -1202,6 +1202,6 @@ describe('agents and edited rows', () => {
       w.files.delete(`/tmp/claude-agents-${SID}.json`)
       w.files.delete(`/tmp/claude-files-${SID}.json`)
     })
-    expect(await bodyOf($, 'ACTIVITY')).toEqual([spread('agents', 'idle', 24), spread('edited', 'idle', 24)])
+    expect(await bodyOf($, 'ACTIVITY')).toEqual([spread('in-flight', '0/6', 24), spread('agents', 'idle', 24), spread('edited', 'idle', 24)])
   })
 })

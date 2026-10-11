@@ -25,7 +25,7 @@ import {
 } from './model'
 import type { Inflight, Progress, Tone } from './model'
 import { ageText } from './sidefile'
-import type { AgentGroup, InflightState, NowState, Res, Snap } from './state'
+import type { AgentGroup, Dispatch, InflightState, NowState, Res, Snap } from './state'
 
 export type Seg = { text: string; color?: string; dim?: boolean; bold?: boolean }
 export type Line = Seg[]
@@ -702,11 +702,20 @@ const editedRows = (r: Snap['edited'], inner: number): CardRow[] => {
   return kvRows(EDITED, capped)
 }
 
+/** The in-flight row: N/6, yellow at the limit, red and bold with the word `over` past it; stale entries trail dim. */
+export const dispatchRows = (r: Res<Dispatch>, inner: number): CardRow[] => {
+  if (!r.ok) return naRows(`in-flight n/a (${r.why})`, inner)
+  const { running, stale, limit } = r.v
+  const head = running > limit ? seg(`${running}/${limit} over`, { color: PALETTE.red, bold: true }) : seg(`${running}/${limit}`, running === limit ? { color: PALETTE.yellow } : {})
+  return kv('in-flight', stale > 0 ? [head, dim(` · ${stale} stale`)] : [head], inner)
+}
+
 const activityCard = (snap: Snap, width: number, inner: number, c: Ctx): Card => {
   const on = snap.toggles.rows
   const rows: CardRow[] = [titleRow('ACTIVITY', null, inner)]
   // narrow: a row for each agent and each file; wider: the groups and the files flowing over a few rows
   const narrow = c.tier === 'narrow'
+  if (on.agents && snap.dispatch) rows.push(...dispatchRows(snap.dispatch, inner))
   if (on.agents) rows.push(...(narrow ? agentsRowsNarrow : agentsRows)(snap.agents, c.nowMs, inner))
   if (on.edited) rows.push(...(narrow ? editedRowsNarrow(snap.edited, inner) : editedRows(snap.edited, inner)))
   return { id: 'activity', width, rows }

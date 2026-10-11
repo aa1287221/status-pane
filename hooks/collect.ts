@@ -33,6 +33,7 @@ import {
   step,
   why,
 } from './model'
+import { dispatchOf } from './dispatch'
 import { fixtureOf, naReason, readSideKind } from './sidefile'
 import type { Cum, RlField, RlSnap, RlSnaps, RlWindow } from './model'
 import type { CpuSample, GitCounts, GitInfo, HookVerdicts, QuotaWindow, Res, Snap, Toggles } from './state'
@@ -463,15 +464,16 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
     return guard(io, fn, ms)
   }
 
-  const [summary, dir, git, model, agents, compacts, cumRes, quota, cpuRes, ramRes, memory, mcp, edited, side] =
+  const [summary, dir, git, model, agentsRes, compacts, cumRes, quota, cpuRes, ramRes, memory, mcp, edited, side] =
     await Promise.all([
       row(on.summary, [base, summaryWired], () => collectSummary(io, b!)),
       row(on.dir || on.repo, [base], async () => shortDir(b!.cwd, b!.home)),
       row(on.dir || on.repo, [base], () => collectGit(io, b!), GIT_ROW_MS),
       row(on.model, [base], () => collectModel(io, b!, input, settingsByRank)),
-      row(on.agents, [base, wired('agents')], async () =>
-        groupAgents(parseJson(await readOpt(io, `${b!.tmp}/claude-agents-${b!.sid}.json`))),
-      ),
+      row(on.agents, [base, wired('agents')], async () => {
+        const text = await readOpt(io, `${b!.tmp}/claude-agents-${b!.sid}.json`)
+        return { text, groups: groupAgents(parseJson(text)) }
+      }),
       row(on.usage, [base, wired('compact')], () => collectCompacts(io, b!)),
       row(true, [base], () => collectCum(io, b!, u, input)),
       row(true, [base, usage], () => collectQuota(io, b!, u!, input)),
@@ -514,7 +516,7 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
     lines: fromCum(c => ({ add: c.cum.add.total, rm: c.cum.rm.total })),
     model,
     cost: fromCumAndUsage(c => ({ all: c.all.cost, session: c.cum.cost.total, durMin: Math.round(c.cum.dur.total / 60_000) })),
-    agents,
+    agents: agentsRes.ok ? { ok: true, v: agentsRes.v.groups } : agentsRes,
     context,
     tokens: fromCumAndUsage(c => ({ all: c.all.tok, session: c.cum.tok.total })),
     quota: quota.ok ? { ok: true, v: { five: quota.v.five, seven: quota.v.seven } } : { ok: false, why: quota.why },
@@ -527,6 +529,8 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
   }
   // the reader's own text is the reason (never cut to a short one); absent when the row is off
   if (on.fixture) snap.fixture = side.ok ? fixtureOf(side.v) : { ok: false, why: naReason(side.why) }
+  // one read of the tracker feeds both rows; a failure reads the same reason in both
+  if (on.agents) snap.dispatch = agentsRes.ok ? dispatchOf(agentsRes.v.text, input.now) : agentsRes
   // a failure behind a row that is switched off is nothing to report; git counts when its status failed
   const shown: [Res<unknown>, boolean][] = [
     [snap.summary, on.summary],
@@ -536,6 +540,8 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
     [snap.model, on.model],
     [snap.cost, on.cost],
     [snap.agents, on.agents],
+    // a failed tracker read is one cause: the agents row already counts it
+    [snap.agents.ok && snap.dispatch ? snap.dispatch : OK, on.agents],
     [snap.context, on.usage],
     [snap.context.ok ? snap.context.v.compacts : OK, on.usage],
     [snap.tokens, on.usage],
