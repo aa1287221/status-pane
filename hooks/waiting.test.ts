@@ -9,7 +9,7 @@ import type { SideOk } from './sidefile'
 // SCHEMA.md section 9 `waiting`, 7.1 merge. The reference now is the hub's: 2026-10-10T12:00:00Z.
 const NOW = Date.parse('2026-10-10T12:00:00Z')
 const DIR = '/root/.claude/projects/-project/references/side-files'
-const LOC = { home: '/root/.claude' }
+const LOC = { home: '/root' }
 
 const encode = (text: string | Uint8Array): Uint8Array => (typeof text === 'string' ? new TextEncoder().encode(text) : text)
 
@@ -94,13 +94,13 @@ describe('hub copies (drift guard)', () => {
   test('each embedded hub copy matches its pinned sha256 and EXPECTED.json is the file it says', async () => {
     expect(HUB_COMMIT).toBe('7b88598c6c18c38d90209ab39e9d3ae4a22f5b4c')
     for (const name of ['EXPECTED.json', 'waiting.hosta.json', 'waiting.hostb.json']) {
-      expect(await sha256(bytesOf(HUB[name]!.lines))).toBe(HUB[name]!.sha256)
+      expect(await sha256(encode(bytesOf(HUB[name]!.lines)))).toBe(HUB[name]!.sha256)
     }
     expect(JSON.parse(bytesOf(HUB['EXPECTED.json']!.lines)).reference.now).toBe('2026-10-10T12:00:00Z')
   })
 
   test('guard: a one-byte edit of an embedded copy changes its hash', async () => {
-    const bytes = bytesOf(HUB['waiting.hosta.json']!.lines)
+    const bytes = encode(bytesOf(HUB['waiting.hosta.json']!.lines))
     const edited = bytes.slice()
     edited[edited.length - 3] = edited[edited.length - 3]! ^ 1
     expect(await sha256(edited)).not.toBe(HUB['waiting.hosta.json']!.sha256)
@@ -257,7 +257,7 @@ describe('item rules (SCHEMA 9): each violation makes that host n/a with its rea
     ['links 6 entries', { links: Array.from({ length: 6 }, () => 'https://example.com/a') }, 'links 超過 5 個'],
     ['links with credentials', { links: ['https://u:p@e.com'] }, 'links[0] 不是 http(s) URL'],
     ['links javascript scheme', { links: ['javascript:x'] }, 'links[0] 不是 http(s) URL'],
-    ['links 301 chars', { links: ['https://e.com/' + 'a'.repeat(285)] }, 'links[0] 超過 300 個字元'],
+    ['links 301 chars', { links: ['https://e.com/' + 'a'.repeat(287)] }, 'links[0] 超過 300 個字元'],
     ['links with a space', { links: ['https://e.com/a b'] }, 'links[0] 不是 http(s) URL'],
     ['bad id (x-1)', { id: 'x-1' }, 'id 格式不合'],
     ['bad id (uppercase hex)', { id: 'hosta-AAAA0001' }, 'id 格式不合'],
