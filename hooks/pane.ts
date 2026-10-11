@@ -361,14 +361,15 @@ const kvRows = (label: string, rows: Line[]): CardRow[] =>
 /** A cell of `width` cells with `text` against its right edge. */
 const cell = (text: string, width: number): string => ' '.repeat(Math.max(0, width - dw(text))) + text
 
-/** The threshold hint and the mode line under the CONTEXT rows; nothing below the line. `base` is the window the line is taken of. */
+/** The threshold hint under the CONTEXT rows: quiet under the line, the toned alert and the mode line at it. `base` is the window the line is taken of. */
 const compactRows = (fill: number | null, compact: CompactState | null, inner: number, base: number, max: number): CardRow[] => {
-  const advice = adviceOf(fill, compact ?? { atPct: DEFAULT_AT })
-  if (advice === null) return []
+  const atPct = compact?.atPct ?? DEFAULT_AT
+  const advice = adviceOf(fill, { atPct })
   // the figure is told only when the line is taken of a smaller window than the one `used` is told against
-  const figure = base < max ? ` (${fmtTok(Math.round((advice.atPct * base) / 100))})` : ''
+  const figure = base < max ? ` (${fmtTok(Math.round((atPct * base) / 100))})` : ''
+  if (advice === null) return wrapWords(`達 ${atPct}%${figure} 建議 /compact`, inner).map((t): CardRow => ({ kind: 'text', line: [dim(t)] }))
   const tone = PALETTE[pctColor(advice.pct)]
-  const rows: CardRow[] = wrapWords(`△ 已達 ${advice.atPct}%${figure} · 建議 /compact`, inner).map((t): CardRow => ({ kind: 'text', line: [seg(t, { color: tone })] }))
+  const rows: CardRow[] = wrapWords(`△ 已達 ${atPct}%${figure} · 建議 /compact`, inner).map((t): CardRow => ({ kind: 'text', line: [seg(t, { color: tone })] }))
   if (compact) rows.push(...kv('suggest', [plain(modeLabel(compact))], inner))
   return rows
 }
