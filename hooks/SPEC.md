@@ -145,6 +145,7 @@ has waited. What the engine gives (#9 probe, 2.1.296; source level per item):
 | `ScheduleWakeup`, `/loop` | `session_crons` (type file says so) | specified, not observed |
 | subagent, monitor, workflow | `background_tasks` types `subagent` / `monitor` / `workflow` | specified, not observed |
 | end of a task | a `UserMessage` row with `origin.kind: 'task-notification'` and `task.id` | specified, not observed |
+| start keys | the `tool.call` result: `Bash` `backgroundTaskId`, `Agent` `agentId` of a `status: 'async_launched'` result, `CronCreate` `id` | specified (2.1.296 source), not observed; that an agent's id is its Stop item's id is inferred |
 | permission dialog | not a `background_tasks` type; the type file has `classic.PermissionRequest` but it did not fire under `-p` (#9); the TUI dialog is not tried | **n/a**: the `PERM` row always reads `n/a（-p 下 PermissionRequest 未觸發，TUI 未驗）` |
 
 There is no list call: `background_tasks` and `session_crons` exist only on the Stop input (a snapshot at
@@ -152,19 +153,29 @@ the end of a turn), so BG is that snapshot plus the plugin's own bookkeeping, ne
 Mid-turn it shows the list of the last Stop; the `snapshot Ns ago` row says how old that is. Before the first
 Stop it reads `BG n/a（還沒有回合結束的快照）`.
 
-- **State.** `$.state` `status-pane.inflight` = `{ sid, seenAt, items, starts }`. `classic.Stop` of the main loop
-  (no `agent_id`) replaces `items` with the snapshot and clears `starts`; a Stop with neither field changes
+- **State.** `$.state` `status-pane.inflight` = `{ sid, seenAt, items, starts, dropped? }`. `classic.Stop` of the main loop
+  (no `agent_id`) replaces `items` with the snapshot and clears `starts` and `dropped`; a Stop with neither field changes
   nothing, and a field that is absent (not `[]`) leaves that class (tasks / crons) as it was. A subagent's Stop
   is not the session's list.
-- **Wait.** `tool.call` of `Bash` or `Agent` with `run_in_background: true`, and `CronCreate` / `ScheduleWakeup`,
-  record a start (kind and time only; never the command or prompt) once `next` returned without `deny` or
-  `isError`, dated by the clock read before the call; a call with an `agentId` (a subagent's) records none. When a Stop lists exactly one new item of a
-  kind and exactly one start of that kind exists, the item waited since that call (`exact`). Residual: a task the
-  user starts by hand (ctrl-b) while one start is open is taken for that call. Otherwise it is dated
-  by the Stop that first listed it and drawn `≥<wait>` (a lower bound). A task the next Stop still lists keeps
-  its date; one it no longer lists is gone. Labels come from the engine's type fields (`shell`, `agent <type>`,
-  `monitor <server>:<tool>`, `workflow <name>`, `cron`, `wakeup`), cleaned of control and bidi characters, <= 48
-  cells; the command line and the cron prompt are never kept.
+- **Wait.** Every `tool.call` of `Bash`, `Agent`, `CronCreate` or `ScheduleWakeup`, the main loop's or a subagent's,
+  is dated by the clock read before it runs. Once `next` returned without `deny` or `isError` it leaves at most one
+  start (kind, time and id only; never the command or prompt): (a) a keyed start when its result names the task
+  (`Bash` `backgroundTaskId`, which a ctrl-b move carries too; `Agent` `agentId` of an `async_launched` result;
+  `CronCreate` `id`): an item with that id and kind is exact from that call whatever else is fresh, and an item first
+  listed before its key arrived becomes exact at the next Stop that lists it; else (b) an unkeyed start, for the main
+  loop's own `run_in_background: true` `Bash` or `Agent`, `CronCreate`, and `ScheduleWakeup` other than `stop: true`
+  (that only cancels); else (c) a veto of its kind when the call may still own a task it cannot date: a subagent's
+  background call, or an `Agent` without `run_in_background: false`, which runs in the background by default in 2.1.296.
+  A subagent's task is in the main loop's Stop list (2.1.296 source: the registry is shared; not observed).
+  The count rule, for a new item no key names: it is exact, dated by that call, only when it is the one such new item
+  of its kind, exactly one unkeyed start of that kind exists, that start is not a veto, and the 64-start cap has evicted
+  none since the last Stop (`dropped`). Otherwise it is dated by the Stop that first listed it and drawn `≥<wait>` (a
+  lower bound). Residual: a task that no tool call made (started before the plugin loaded, a durable cron loaded at
+  session start, or one the engine started itself) is taken for that call when its kind has exactly one unkeyed start open.
+  A task the next Stop still lists keeps its date; one it no longer lists is gone. Labels come from the engine's type
+  fields (`shell`, `agent <type>`, `monitor <server>:<tool>`, `workflow <name>`, `cron`, `wakeup`), cleaned of control
+  and bidi characters and clipped to 48 cells on code point boundaries, `…` marking a cut; the command line and the cron
+  prompt are never kept.
 - **Notification.** A `UserMessage` row of a task notification hides its task at once (module memory of the session that drew it, ended by
   the next Stop, 64 ids at most): a render hook may not write `$.state` (the engine denies it), so the view subtracts the ids.
   Without it the task leaves with the next Stop, which the notification's own turn ends with.
@@ -172,7 +183,9 @@ Stop it reads `BG n/a（還沒有回合結束的快照）`.
   snapshot is empty; `BG n/a（原因）` when the record cannot be read, the session id cannot, nothing was seen yet, or
   the record belongs to another session. `inflightOf` is the one view: card and `/progress` read it.
 - **Not known.** The permission wait; whether a workflow, monitor, `ScheduleWakeup` or `/loop` shows up as drawn
-  here (never stimulated); a task that starts and ends inside one turn never appears (it is in no snapshot).
+  here (never stimulated); whether a subagent's task is in the main loop's Stop list and whether the id a result
+  names is the id the Stop lists (source only, never observed); a task that starts and ends inside one turn never
+  appears (it is in no snapshot).
 
 ## Dependencies
 
@@ -695,10 +708,10 @@ Card     Box width round gray paddingX=1 column               (Section: Box widt
 | 56 | `/progress` is the card's view | the text's rows equal the card's rows at the three widths (running, parallel, idle); where the card is not drawn the text says why |
 | 57 | through the engine | `/progress` registered with `immediate: true` (the other command without); a fresh session reads idle on every surface; a held `tool.call` shows with its elapsed time at 36 / 49 / 89 and goes when it ends; the same view answers `/progress` mid-call with no `usage()` call; overlapping calls end in either order; a denied call and a throwing `next(e)` still end; `turn.complete` clears an unseen end; a subagent's `tool.call` is not a run and a subagent's `turn.complete` leaves the main loop's run alone; mutations: `noteEnd` outside the `finally`, the `agentId` guard on `turn.complete` and the `agentId` filter in `runOf` each turn a named test red; the 2 s repaint runs while a call is in flight and stops with it; before the first refresh `/progress` says `等待第一次更新` |
 | 58 | #26 follow-ups | `data.count` as `3.0` / `3e0` / `30e-1` is malformed with its own text and never shown (a string or other non-number count is now malformed at the reader, text `不是 JSON 整數字面量`, instead of the card's `不是整數`; SCHEMA §9), plain integers still read, an old file with a bad count is stale, a decoy `count` elsewhere does not stand in; an opt-in row turns on only for boolean true (`1`, `"yes"`, `"true"`, `[1]` leave it off) while a default-on row keeps the loose reading; U+061C in a reason is not drawn |
-| 59 | background bookkeeping | `startOf`: Bash / Agent with `run_in_background === true`, `CronCreate`, `ScheduleWakeup` are starts, a string `"true"` and other tools are not; `addStart` caps at 16 and starts over for another session; `noteStop`: one task + one start of its kind is exact, no start or several is first-seen (not exact); a seen task keeps its date; kinds are labelled from type fields only (no command, no prompt kept); labels are cleaned and clipped; an absent field keeps that class, neither field is no snapshot; `endTask` by id |
+| 59 | background bookkeeping | `startOf`: Bash / Agent with `run_in_background === true`, `CronCreate`, `ScheduleWakeup` are starts, a string `"true"` and other tools are not, and `ScheduleWakeup` with `stop: true` is not (another `stop` value still is); `taskIdOf`: `Bash` `backgroundTaskId`, `Agent` `agentId` only of a `status: 'async_launched'` result, `CronCreate` `id`, each tool reads its own key, an empty or non-string id and any result shape (`null`, a string, no `result`) name nothing and never throw; `mayStartBg` knows the four tools by own name (`constructor` and `toString` are not tools); `bgStartOf`, one test per row: keyed for the main loop, a subagent and a shell moved to the background by hand (no flag), unkeyed for the main loop's own flagged call, a veto for a subagent's background call and for an `Agent` without `run_in_background: false`, nothing for a foreground subagent `Bash`, `Agent` `false`, `ScheduleWakeup` with `stop: true` and other tools; `addStart` caps at 64 (64 kept and unmarked, the 65th evicts the oldest and sets `dropped`, which stays until the Stop) and starts over, unmarked, for another session; `noteStop`: a task named by a keyed start of its own kind is exact with that start whatever else is fresh or unkeyed (a key of another kind, or of a task the Stop does not list, dates nothing; a keyed task is no rival of the others), the count rule is exact only for one unkeyed start, no veto of the kind, no `dropped` and one rival of the kind (a veto alone or beside the start, or `dropped`, makes it first-seen, not exact; a veto of another kind does not; new tasks of other kinds take nothing away), a key that arrives after the Stop that listed the task dates it at the next Stop but never moves an exact task or one of another kind, monitor / workflow / unknown types are never dated by a shell start, open or keyed, an unkeyed start dates its own kind only, no start or several is first-seen (not exact); a seen task keeps its date; the Stop clears `starts` and `dropped`; kinds are labelled from type fields only (no command, no prompt kept); labels are cleaned and clipped to 48 cells on code point boundaries (a CJK name, an emoji on the cut and one cell before it, 48 fit and 49 are cut, a space at the cut goes with it); an absent field keeps that class, neither field is no snapshot; `endTask` by id |
 | 60 | the in-flight view | oldest first at the draw clock, three and a count, `ageSec` of the snapshot; empty list is `none`, not n/a; n/a for read failure, session id failure, no snapshot (also starts only) and another session's record |
 | 61 | BG and PERM at the three layouts | bodyColumns 36 / 49 / 89: NOW, `BG` rows, `+N more`, `snapshot` row, then the PERM n/a read in full; none; every n/a keeps its frame; a long label loses its tail, the wait stays; nothing overflows; without `view.progress.inflight` the card is the NOW band alone; `/progress` lines are the card's rows |
-| 62 | in-flight through the engine | a fresh session reads BG n/a; a background `Bash` call then a Stop shows the wait from the call at 36 / 49 / 89 and in `/progress`; the notification row hides it; crons and wakeups; a subagent's Stop and a Stop with neither field change nothing; `turn.complete` does not clear; a non-notification message or another id ends nothing; mutations: the notification hook, the `agent_id` guard, `noteBgStart`, the 1:1 start match and the other-session check each turn a named test red |
+| 62 | in-flight through the engine | a fresh session reads BG n/a; a background `Bash` call then a Stop shows the wait from the call at 36 / 49 / 89 and in `/progress`; the notification row hides it; crons and wakeups; a subagent's Stop and a Stop with neither field change nothing; `turn.complete` does not clear; a non-notification message or another id ends nothing; the three sequences of the #16 review, each without ids (a lower bound `≥`) and with them (the wait of the listed task's own call): a main shell that ended beside a shell a subagent started, a fired `ScheduleWakeup` beside a subagent's `CronCreate`, a flagged `Agent` that ended beside one without the flag; a shell moved to the background by hand is dated by its `backgroundTaskId`; `ScheduleWakeup` with `stop: true` leaves no start and one without it dates its cron; a task listed while its subagent call was still returning is dated by the key at the next Stop; 63 keyed starts after a veto push the veto out, and `dropped` stops the count rule; hidden ids: the 65th hides nothing and exactly one row is left, a notification of another session starts the set over; mutations, each turning a named test red: the notification hook, the `agent_id` guard, `noteBgStart`, the count rule, the other-session check, a keyed match without the kind check (fresh and late-key paths), `dropped` ignored, the veto check removed, keyed starts in the pool, `stop: true` counted as a start, the late key removed, `status` not checked, a subagent call as an unkeyed start, an `Agent` without the flag as nothing, monitor / workflow / other mapped to the shell kind, labels cut with `slice`, the hidden ids not cleared for another session, the hidden-id cap at 63 |
 
 ## Acceptance
 

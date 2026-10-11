@@ -527,7 +527,7 @@ const progressCard = (width: number, inner: number, p: Res<Progress>, bg: Res<In
   return { id: 'progress', width, rows }
 }
 
-/** BG: what the last Stop snapshot listed, each with how long it has waited (`≥` when only a lower bound), then the PERM row, which has no source. */
+/** BG: what the last Stop snapshot listed, each with how long it has waited (`≥` when only a lower bound), then the PERM row: always n/a (#9: PermissionRequest did not fire under -p; the TUI is untried). */
 const bgRows = (bg: Res<Inflight>, inner: number): CardRow[] => {
   const rows: CardRow[] = []
   if (!bg.ok) rows.push(...naRows(`BG n/a（${bg.why}）`, inner))
