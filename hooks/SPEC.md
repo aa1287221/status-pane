@@ -145,7 +145,7 @@ has waited. What the engine gives (#9 probe, 2.1.296; source level per item):
 | `ScheduleWakeup`, `/loop` | `session_crons` (type file says so) | specified, not observed |
 | subagent, monitor, workflow | `background_tasks` types `subagent` / `monitor` / `workflow` | specified, not observed |
 | end of a task | a `UserMessage` row with `origin.kind: 'task-notification'` and `task.id` | specified, not observed |
-| permission dialog | none: not a `background_tasks` type; `classic.PermissionRequest` did not fire under `-p` | **n/a**: the `PERM` row always reads `n/a（權限對話框不在引擎的背景清單，沒有等待時間來源）` |
+| permission dialog | not a `background_tasks` type; the type file has `classic.PermissionRequest` but it did not fire under `-p` (#9); the TUI dialog is not tried | **n/a**: the `PERM` row always reads `n/a（-p 下 PermissionRequest 未觸發，TUI 未驗）` |
 
 There is no list call: `background_tasks` and `session_crons` exist only on the Stop input (a snapshot at
 the end of a turn), so BG is that snapshot plus the plugin's own bookkeeping, never the engine's live list.
@@ -157,14 +157,16 @@ Stop it reads `BG n/a（還沒有回合結束的快照）`.
   nothing, and a field that is absent (not `[]`) leaves that class (tasks / crons) as it was. A subagent's Stop
   is not the session's list.
 - **Wait.** `tool.call` of `Bash` or `Agent` with `run_in_background: true`, and `CronCreate` / `ScheduleWakeup`,
-  record a start (kind and time only; never the command or prompt). When a Stop lists exactly one new item of a
-  kind and exactly one start of that kind exists, the item waited since that call (`exact`). Otherwise it is dated
+  record a start (kind and time only; never the command or prompt) once `next` returned without `deny` or
+  `isError`, dated by the clock read before the call; a call with an `agentId` (a subagent's) records none. When a Stop lists exactly one new item of a
+  kind and exactly one start of that kind exists, the item waited since that call (`exact`). Residual: a task the
+  user starts by hand (ctrl-b) while one start is open is taken for that call. Otherwise it is dated
   by the Stop that first listed it and drawn `≥<wait>` (a lower bound). A task the next Stop still lists keeps
   its date; one it no longer lists is gone. Labels come from the engine's type fields (`shell`, `agent <type>`,
   `monitor <server>:<tool>`, `workflow <name>`, `cron`, `wakeup`), cleaned of control and bidi characters, <= 48
   cells; the command line and the cron prompt are never kept.
-- **Notification.** A `UserMessage` row of a task notification hides its task at once (module memory, cleared by
-  the next Stop): a render hook may not write `$.state` (the engine denies it), so the view subtracts the ids.
+- **Notification.** A `UserMessage` row of a task notification hides its task at once (module memory of the session that drew it, ended by
+  the next Stop, 64 ids at most): a render hook may not write `$.state` (the engine denies it), so the view subtracts the ids.
   Without it the task leaves with the next Stop, which the notification's own turn ends with.
 - **Rows.** `BG shell 3m10s` oldest first, three at most and `+N more`, then `snapshot 3m00s ago`; `BG none` when the
   snapshot is empty; `BG n/a（原因）` when the record cannot be read, the session id cannot, nothing was seen yet, or

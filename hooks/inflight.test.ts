@@ -18,7 +18,7 @@ const WIDTHS = [
 const ok = <T>(v: T): Res<T> => ({ ok: true, v })
 const SID_OK = ok('S1')
 const IDLE: Res<NowState | null> = ok({ sid: 'S1', calls: [] })
-const PERM_TEXT = 'PERM n/a（權限對話框不在引擎的背景清單，沒有等待時間來源）'
+const PERM_TEXT = 'PERM n/a（-p 下 PermissionRequest 未觸發，TUI 未驗）'
 const RLO = String.fromCharCode(0x202e)
 const squash = (s: string) => s.replace(/\s/g, '')
 
@@ -70,6 +70,12 @@ describe('inflight: the Stop snapshot', () => {
     s = addStart(s, 'S1', { kind: 'shell', at: T0 - 40_000 })
     const out = noteStop(s, 'S1', { background_tasks: [bt()], session_crons: [] }, T0)!
     expect(out.items[0]).toMatchObject({ since: T0, exact: false })
+  })
+
+  test('two fresh items of one kind and one start: neither is exact', () => {
+    const s0 = addStart(null, 'S1', { kind: 'shell', at: T0 - 90_000 })
+    const out = noteStop(s0, 'S1', { background_tasks: [bt(), bt({ id: 'b2' })], session_crons: [] }, T0)!
+    expect(out.items.map(i => [i.id, i.exact, i.since])).toEqual([['b1', false, T0], ['b2', false, T0]])
   })
 
   test('a task seen before keeps its start; one gone from the snapshot is dropped', () => {
@@ -261,6 +267,78 @@ describe('through the engine: Stop snapshot, tool.call starts and notifications'
       expect((await bgBody($, columns)).slice(0, 2)).toEqual([pair('NOW', 'idle', inner), pair('BG', 'none', inner)])
     })
   }
+
+  for (const mode of ['deny', 'error', 'throw', 'subagent'] as const) {
+    test(`a background call that ends as ${mode} leaves no start: a fresh shell at the Stop is only a lower bound`, async ($, on) => {
+      const { world, clock } = await boot($, on, w => (w.now = T0))
+      if (mode === 'deny') world.toolResult = () => ({ deny: 'no' })
+      if (mode === 'error') world.toolResult = () => ({ result: {}, isError: true })
+      if (mode === 'throw') world.toolResult = () => { throw new Error('boom') }
+      await $.tool.call({ tool: 'Bash', command: 'sleep 600', run_in_background: true, ...(mode === 'subagent' ? { agentId: 'a1' } : {}) } as never).catch(() => undefined)
+      world.now = T0 + 600_000
+      await $.classic.Stop({ stop_hook_active: false, background_tasks: [bt()], session_crons: [] })
+      await clock.settle()
+      expect((await $.command.run(PROGRESS)).text).toContain('BG   ≥shell 0s')
+    })
+  }
+
+  test('a start is dated by when the call began, not when it settled', async ($, on) => {
+    const { world, clock } = await boot($, on, w => (w.now = T0))
+    world.toolResult = () => {
+      world.now = T0 + 5_000
+      return { result: {} }
+    }
+    await $.tool.call({ tool: 'Bash', command: 'x', run_in_background: true })
+    world.now = T0 + 60_000
+    await $.classic.Stop({ stop_hook_active: false, background_tasks: [bt()], session_crons: [] })
+    await clock.settle()
+    expect((await $.command.run(PROGRESS)).text).toContain('BG   shell 1m00s')
+  })
+
+  test('the hidden ids last until the next Stop only: a reused id is shown again', async ($, on) => {
+    const { clock } = await boot($, on, w => (w.now = T0))
+    const note = async (id: string) => {
+      const m = await $.ui.mount({ plugin: 'status-pane', surface: 'terminal', component: 'UserMessage', props: NOTE(id) })
+      await m.drawn()
+      await m.unmount()
+    }
+    await $.classic.Stop({ stop_hook_active: false, background_tasks: [bt()], session_crons: [] })
+    await note('b1')
+    await $.classic.Stop({ stop_hook_active: false, background_tasks: [], session_crons: [] })
+    await $.classic.Stop({ stop_hook_active: false, background_tasks: [bt()], session_crons: [] })
+    await clock.settle()
+    expect((await $.command.run(PROGRESS)).text).toContain('BG   ≥shell 0s')
+  })
+
+  test('only 64 notification ids are held: the 65th hides nothing', async ($, on) => {
+    const { clock } = await boot($, on, w => (w.now = T0))
+    const ids = Array.from({ length: 65 }, (_, i) => `n${i}`)
+    await $.classic.Stop({ stop_hook_active: false, background_tasks: ids.map(id => bt({ id })), session_crons: [] })
+    for (const id of ids) {
+      const m = await $.ui.mount({ plugin: 'status-pane', surface: 'terminal', component: 'UserMessage', props: NOTE(id) })
+      await m.drawn()
+      await m.unmount()
+    }
+    await clock.settle()
+    expect((await $.command.run(PROGRESS)).text).toContain('BG   ≥shell 0s\n')
+  })
+
+  test('hidden ids belong to the session that drew them', async ($, on) => {
+    const { world, clock } = await boot($, on, w => (w.now = T0))
+    const note = async (id: string) => {
+      const m = await $.ui.mount({ plugin: 'status-pane', surface: 'terminal', component: 'UserMessage', props: NOTE(id) })
+      await m.drawn()
+      await m.unmount()
+    }
+    const sid = world.session.id
+    await $.classic.Stop({ stop_hook_active: false, background_tasks: [bt(), bt({ id: 'b2' })], session_crons: [] })
+    await note('b1')
+    world.session.id = 'S2-other'
+    await note('b2')
+    world.session.id = sid
+    await clock.settle()
+    expect((await $.command.run(PROGRESS)).text).toContain('BG   ≥shell 0s\n     ≥shell 0s')
+  })
 
   test('a cron in the snapshot shows as cron, a one-shot as wakeup; a later empty Stop clears both', async ($, on) => {
     const { world, clock } = await boot($, on, w => (w.now = T0))

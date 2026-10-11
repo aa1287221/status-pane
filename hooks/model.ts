@@ -749,7 +749,7 @@ export const inflightOf = (flight: Res<InflightState | null>, sid: Res<string>, 
 }
 
 /** The permission dialog is not a background item and no hook gave its wait (#9): this row is always n/a. */
-export const PERM_NA = 'n/a（權限對話框不在引擎的背景清單，沒有等待時間來源）'
+export const PERM_NA = 'n/a（-p 下 PermissionRequest 未觸發，TUI 未驗）'
 
 /** The rows of BG as text lines (after NOW), the same words the card draws. */
 export const inflightLines = (flight: Res<InflightState | null>, sid: Res<string>, nowMs: number): string[] => {

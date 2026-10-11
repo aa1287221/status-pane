@@ -40,6 +40,8 @@ type Run = {
   nowTick: Timer | null
   /** Background task ids whose notification row was drawn since the last Stop; a render hook may not write $.state, so BG hides these from memory. */
   ended: Set<string>
+  /** The session that drew those notifications; ids of another session hide nothing. */
+  endedSid: string | null
   running: Promise<void> | null
   /** Counts refreshes: only the one that holds the latest number may write or free `running`. */
   epoch: number
@@ -258,7 +260,7 @@ const progressSources = async (
     (err: unknown) => ({ ok: false as const, why: `工具紀錄讀不到：${why(err)}` }),
   )
   const inflight: Res<InflightState | null> = await read($, inflightA).then(
-    v => ({ ok: true as const, v: [...run.ended].reduce((cur, id) => (cur ? endTask(cur, cur.sid, id) : cur), v) }),
+    v => ({ ok: true as const, v: [...run.ended].reduce((cur, id) => (cur && run.endedSid !== null ? endTask(cur, run.endedSid, id) : cur), v) }),
     (err: unknown) => ({ ok: false as const, why: `背景工作紀錄讀不到：${why(err)}` }),
   )
   const sid: Res<string> = await $.session.id().then(
@@ -268,10 +270,10 @@ const progressSources = async (
   return { tools, sid, inflight }
 }
 
-/** Dates a background call, so the Stop snapshot that lists it can say how long it has waited. Never throws. */
-const noteBgStart = async ($: EngineInterface, e: { tool: string; run_in_background?: unknown }): Promise<void> => {
+/** Dates a background call that went through, so the Stop snapshot that lists it can say how long it waited. Never throws. */
+const noteBgStart = async ($: EngineInterface, e: { tool: string; run_in_background?: unknown }, at: number | null): Promise<void> => {
   try {
-    const start = startOf(e, await $.clock.now())
+    const start = at === null ? null : startOf(e, at)
     if (!start) return
     const sid = sidOf(await $.session.id())
     await update($, inflightA, s => addStart(s, sid, start))
@@ -284,7 +286,8 @@ const noteBgStart = async ($: EngineInterface, e: { tool: string; run_in_backgro
 const noteBgStop = async ($: EngineInterface, run: Run, e: { agent_id?: string; background_tasks?: unknown; session_crons?: unknown }): Promise<void> => {
   if (e.agent_id !== undefined) return
   try {
-    run.ended.clear()
+    // the hidden ids end with the Stop that lists the truth; the next notification starts the set afresh
+    run.endedSid = null
     const now = await $.clock.now()
     const sid = sidOf(await $.session.id())
     await update($, inflightA, s => noteStop(s, sid, e, now))
@@ -311,6 +314,7 @@ export const register: Register = on => {
     repaint: [],
     nowTick: null,
     ended: new Set(),
+    endedSid: null,
     running: null,
     epoch: 0,
     lastTickAt: Number.NEGATIVE_INFINITY,
@@ -366,13 +370,17 @@ export const register: Register = on => {
 
   on('tool.call', async ($, e, next) => {
     const called = await noteStart($, run, e)
-    await noteBgStart($, e)
+    // only a main-loop background call is dated, and only once it went through: a denied or failed one made no task
+    let at: number | null = null
+    if (e.agentId === undefined && startOf(e, 0)) at = await $.clock.now().catch(() => null)
     let ran
     try {
       ran = await next(e)
     } finally {
       await noteEnd($, run, called)
     }
+    const r = ran as { deny?: unknown; isError?: unknown } | null | undefined
+    if (at !== null && r?.deny === undefined && r?.isError !== true) await noteBgStart($, e, at)
     try {
       const n = patchLineCount(ran)
       if (n.add > 0 || n.rm > 0) {
@@ -438,9 +446,20 @@ export const register: Register = on => {
   })
 
   // a task's notification row says it ended: BG hides it without waiting for the next Stop
-  on('ui.render', { component: 'UserMessage' }, (_$, e, next) => {
+  on('ui.render', { component: 'UserMessage' }, async ($, e, next) => {
     const id = e.props.origin?.kind === 'task-notification' ? e.props.task?.id : undefined
-    if (id && run.ended.size < 64) run.ended.add(id)
+    if (id) {
+      try {
+        const sid = sidOf(await $.session.id())
+        if (run.endedSid !== sid) {
+          run.ended.clear()
+          run.endedSid = sid
+        }
+        if (run.ended.size < 64) run.ended.add(id)
+      } catch {
+        // the task then leaves with the next Stop
+      }
+    }
     return next(e)
   })
 
