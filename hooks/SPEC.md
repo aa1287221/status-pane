@@ -260,6 +260,13 @@ at most 3 unreadable-host rows then `+N hosts n/a`. A refused `list` makes the c
 counts one error. The tail gets `WAIT N`, `WAIT N (D due)` or `WAIT ≥N` first, and none at 0 open items.
 Stale own copies (SCHEMA 5.3 point 6) are not repaired here: the card shows what the synced files say.
 
+Known limit, the 16-file cap is silent: `skipped` is computed by `collectWaiting` but nothing draws it, not the
+title, not a row, not the tail. With more than 16 matching names the ones that sort last by name are never read, so
+their open items are missing from the card and the tail, and the card can read `0` with 沒有登記 while an unread
+host has open items. Observed through the engine (89 columns, 17 valid host files, one open item): the item in the
+17th file gives the title `0`, the body 沒有登記 and a tail with no `WAIT`; the same item in the 16th file gives `1`
+and `WAIT 1`, as it does with 16 files in all. Not decided: whether to draw the skipped count or to raise the cap.
+
 ## Files the mod writes (format contract)
 
 Byte-compatible with `statusline.js`. After deployment `statusLine` is removed everywhere, so the
@@ -732,7 +739,7 @@ Card     Box width round gray paddingX=1 column               (Section: Box widt
 | 28-1 | merge, hub EXPECTED | `waiting.test.ts`: the hub `merged` set and winners at the reference now; closed wins, the larger host wins a tie, due is strictly over 604800 s, 0002 takes the newer text |
 | 28-2 | hub copies | `waiting.test.ts`: each embedded copy matches its pinned sha256 (commit 7b88598); a one-byte edit changes the hash |
 | 28-3 | item rules | `waiting.test.ts`: one case per SCHEMA 9 violation, each n/a with its reason; 200 emoji accepted; unknown keys ignored |
-| 28-4 | name filter and cap | `waiting.test.ts`: `waiting.json`, two-part names and `.tmp` leftovers never opened; 16 read, the rest skipped |
+| 28-4 | name filter and cap | `waiting.test.ts`: `waiting.json`, two-part names and `.tmp` leftovers never opened; 16 read, the rest skipped (`skipped` is not drawn: a known limit, see the WAITING card section) |
 | 28-5 | AC1 empty states | `waiting.test.ts`: absent dir (list throws ENOENT, still 0), non-matching names, all closed, a truncated host beside an empty one reads `—`, not 0 |
 | 28-6 | card layout and rows | `waitingcard.test.ts`: band of one at 36/49/89 after ACTIVITY, before SYSTEM; DUE at the right edge; `+N more`; `≥N`; `—`; 沒有登記 never beside an unreadable host |
 | 28-7 | tail | `waitingcard.test.ts`: `WAIT N`, `(D due)`, `≥N`; none at 0 or unreadable; first segment; row off or master off gives none |
