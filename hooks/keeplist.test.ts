@@ -637,7 +637,8 @@ const withTasks =
   }
 const keepOf = (w: World) => w.stateValues.get('keep') as KeepState | null | undefined
 const keptOf = (w: World) => w.stateValues.get('kept') as KeptFiles | undefined
-const wrote = (w: World, key: string): boolean => w.stateSets.includes(key)
+/** Whether `key` was written, counting only the writes after the first `from` ones. */
+const wrote = (w: World, key: string, from = 0): boolean => w.stateSets.slice(from).includes(key)
 const READ = (path: string) => ({ tool: 'Read', file_path: path }) as const
 const EDIT = (path: string) => ({ tool: 'Edit', file_path: path, old_string: 'a', new_string: 'b' }) as const
 
@@ -745,16 +746,21 @@ describe('engine: the instructions the summarizer is told', () => {
     expect(SEEN[1]!.instructions).toBeUndefined()
   })
 
-  // 31-21: told once, whoever passes it on and however often
-  test('instructions that already carry the block are not given it twice', async ($, on) => {
-    const { compact } = await setup($, on, { env: ON, edit: withTasks(1) })
+  // 31-21: told once, whoever passes it on and however often; a call that finds the block is silent
+  test('instructions that already carry the block are not given it twice, and cost no read and no write', async ($, on) => {
+    const { world, compact } = await setup($, on, { env: ON, edit: withTasks(1) })
     await compact({ instructions: 'CMD' })
     const told = SEEN[0]!.instructions as string
     expect(told.split(MARK).length - 1).toBe(1)
+    // the first call read the task and wrote `keep`; the calls below must add to neither
+    const reads = world.reads.length
+    const writes = world.stateSets.length
     await compact({ instructions: told })
     expect(SEEN[1]!.instructions).toBe(told)
     await compact({ instructions: `before ${MARK} after` })
     expect(SEEN[2]!.instructions).toBe(`before ${MARK} after`)
+    expect(world.reads.length).toBe(reads)
+    expect(wrote(world, 'keep', writes)).toBe(false)
   })
 
   test('a trigger the engine may add later is passed on untouched', async ($, on) => {
