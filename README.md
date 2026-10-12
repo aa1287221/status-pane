@@ -2,7 +2,7 @@
 
 Claude Code 的 function-hooks mod，用來取代原生的 `statusLine`（cc-statusline 的 `statusline.js`）：
 
-- **右側 pane**：卡片式儀表板。卡片用引擎畫的 `Box`，進度條用 truecolor 的 `Raster`。卡片包括 PROGRESS（NOW 列：目前的工具與經過時間；BG 列：背景 shell、排程等了多久；權限對話框：-p 下 PermissionRequest 沒有觸發、TUI 還沒驗，PERM 列固定印 `n/a（原因）`）、CONTEXT、5H、7D、COST、GIT、ACTIVITY、SYSTEM，依寬度自動排成 1、2 或 3 欄，超出高度時用滑鼠捲動。
+- **右側 pane**：卡片式儀表板。卡片用引擎畫的 `Box`，進度條用 truecolor 的 `Raster`。卡片包括 PROGRESS（NOW 列：目前的工具與經過時間；BG 列：背景 shell、排程等了多久；權限對話框：-p 下 PermissionRequest 沒有觸發、TUI 還沒驗，PERM 列固定印 `n/a（原因）`）、CONTEXT、5H、7D、COST、GIT、ACTIVITY、SYSTEM、SYNC，依寬度自動排成 1、2 或 3 欄，超出高度時用滑鼠捲動。
 - **prompt 下方提示行的尾巴**：一行精簡資訊，例如 `ctx 4% · 5h 20% · 7d 74% · $0.33 · 21:09`，被 `/diff` 或其他 pane 擋住時仍看得到。
 
 詳細規格、資料對應與測試路徑矩陣在 [`hooks/SPEC.md`](hooks/SPEC.md)。
@@ -39,6 +39,7 @@ Claude Code 的 function-hooks mod，用來取代原生的 `statusLine`（cc-sta
 - `~/.claude/cc-statusline-rows.json` 可以逐列關閉；設成 `"enabled": false` 會整個停用，什麼都不收集、不寫入。
 - WAITING 卡預設開啟（見 #28）：讀 `~/.claude/projects/-project/references/side-files/waiting.<host>.json`，列出所有機器尚未關閉的等待項目（超過 7 天標 DUE）；最多讀 16 個機器檔（依檔名排序），超過的不讀，卡片與提示行也都不提示（已知限制）；沒有項目時顯示「沒有登記」；提示行前面加 `WAIT N`。卡片只讀、不寫入；`"waiting": false` 關閉卡片與提示段。
 - 加上 `"fixture": true`（只認布林 true，`1`、`"yes"` 不算）會多出一張 FIXTURE 卡，讀 `$TMPDIR/claude-side/fixture.json`（side file 契約的示範，預設關閉）；檔案缺少、過期或損毀時，卡片顯示 `n/a（原因）`。
+- SYNC 卡（claude-memory 與 `origin/sync-data-v2` 的領先／落後、上次 push 與 fetch 時間）預設開啟，提示列也會先顯示 `SYNC -N PULL`。資料來自 `~/.claude/scripts/hooks/sync-status.py`，只讀本地 ref，不連網。沒有這支 producer 的機器上，卡片顯示 `n/a（缺檔）`；超過 15 分鐘沒有重寫（producer 只在 hook 執行時寫檔）則顯示 `n/a（過期 …）`。這兩種是預期中的狀態，只顯示、不算錯誤；其他 n/a（收集失敗、格式錯誤、檔案損毀等）算 SYSTEM 的一個錯誤。要關掉就在 `~/.claude/cc-statusline-rows.json` 加上 `"sync": false`，卡片、提示列的 SYNC 段與可能有的錯誤都會一起消失。
 
 ## 開發
 

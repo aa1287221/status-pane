@@ -49,7 +49,7 @@ export type KindSpec = { cls: 'local' | 'synced'; ttlSec: number | null; finalTt
 /** Section 9. A null TTL never expires; a null final TTL means `data.final` is ignored. */
 export const KINDS: Record<string, KindSpec> = {
   fixture: { cls: 'local', ttlSec: 600, finalTtlSec: null, intFields: ['count'] },
-  'sync-status': { cls: 'local', ttlSec: 900, finalTtlSec: null },
+  'sync-status': { cls: 'local', ttlSec: 900, finalTtlSec: null, intFields: ['ahead', 'behind'] },
   'site-watch': { cls: 'local', ttlSec: 300, finalTtlSec: null },
   'review-lane': { cls: 'local', ttlSec: 300, finalTtlSec: 86_400 },
   waiting: { cls: 'synced', ttlSec: null, finalTtlSec: null },

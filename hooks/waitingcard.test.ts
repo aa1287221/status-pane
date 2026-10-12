@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 import type { RenderSurface } from 'claude-code'
 
-import { boot, cardOf, hintText, makeSnap, mountPane, paneView } from './fixture'
+import { boot, cardOf, hintText, makeSnap, mountPane, paneView, pinSyncOff } from './fixture'
 import { tailText } from './model'
 import { layoutTree, paneLayout } from './pane'
 import type { Layout } from './pane'
@@ -197,7 +197,7 @@ describe('the WAITING tail segment', () => {
 describe('the WAITING card: side files through the engine', () => {
   const captured = (w: { files: Map<string, string>; now: number }, hostb = CAPTURE['waiting.hostb.json']!.lines.join('\n') + '\n') => {
     w.now = REF_NOW
-    w.files.set(ROWS_FILE, '{"waiting":true}')
+    w.files.set(ROWS_FILE, pinSyncOff('{"waiting":true}'))
     w.files.set(`${SIDE}/waiting.hosta.json`, CAPTURE['waiting.hosta.json']!.lines.join('\n') + '\n')
     w.files.set(`${SIDE}/waiting.hostb.json`, hostb)
   }

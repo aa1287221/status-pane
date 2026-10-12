@@ -18,6 +18,7 @@ export type RowKey =
   | 'edited'
   | 'history'
   | 'progress'
+  | 'sync'
   | 'fixture'
   | 'waiting'
 
@@ -71,6 +72,9 @@ export type CpuSample = { idle: number; total: number }
 
 export type MemInfo = { usedKb: number; totalKb: number; pct: number }
 
+/** The SYNC card (SCHEMA.md kind `sync-status`, #29): ahead and behind of sync-data-v2 against its last fetch; stamps are epoch seconds or null. */
+export type SyncData = { branch: string; upstream: string; ahead: number; behind: number; lastPushSec: number | null; lastFetchSec: number | null; observedAtSec: number }
+
 /** Everything the pane and the tail draw from; written by one refresh. */
 export type Snap = {
   at: number
@@ -96,6 +100,8 @@ export type Snap = {
   fixture?: Res<{ count: number; observedAtSec: number }>
   /** The WAITING board (SCHEMA.md kind `waiting`); absent unless the `waiting` row is on. */
   waiting?: Res<WaitingData>
+  /** The SYNC card and tail hint; absent unless the `sync` row is on. */
+  sync?: Res<SyncData>
   /** What the settings said of the tracker hooks at this refresh; kept when a later read fails. */
   hooks: HookVerdicts
 }

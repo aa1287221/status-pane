@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 import type { RenderSurface } from 'claude-code'
 
-import { MOCKUP_AT, NOW_SEC, SID, boot, mountPane, setUsage } from './fixture'
+import { MOCKUP_AT, NOW_SEC, SID, boot, mountPane, pinSyncOff, setUsage } from './fixture'
 import type { World } from './fixture'
 import { decodeCells, findOverflow, paneParts, renderTree } from './tree'
 import type { Node } from './tree'
@@ -94,7 +94,7 @@ describe('cards come and go with the toggles, at every breakpoint', () => {
   ]
   for (const [rows, gone, renamed = {}] of CASES) {
     test(`${rows}`, async ($, on) => {
-      await boot($, on, w => w.files.set(ROWS_FILE, JSON.stringify({ ...JSON.parse(rows), waiting: false })))
+      await boot($, on, w => w.files.set(ROWS_FILE, pinSyncOff(JSON.stringify({ ...JSON.parse(rows), waiting: false }))))
       for (const { columns, cards } of BREAKPOINTS) {
         const expected = cards
           .map(c => c[0])
