@@ -23,6 +23,7 @@ import {
   paneText,
   paneView,
   pair,
+  pinSyncOff,
   right,
   summarize,
   without,
@@ -300,7 +301,7 @@ describe('#8 row toggles through the rows file', () => {
   })
 
   test('a single key off removes only that card, and its segments leave the tail', async ($, on) => {
-    await boot($, on, w => w.files.set(ROWS_FILE, '{"quota":false}'))
+    await boot($, on, w => w.files.set(ROWS_FILE, pinSyncOff('{"quota":false}')))
 
     const parts = await paneView($)
     // 5H and 7D gone, CONTEXT has the whole width to itself
@@ -315,12 +316,12 @@ describe('#8 row toggles through the rows file', () => {
     const real = `{ "enabled": true, "summary": true, "dir": true, "repo": true, "model": true, "cost": true,
       "usage": true, "quota": true, "agents": true, "memory_mcp": true, "edited": true, "history": true,
       "summaryInterval": 30 }`
-    await boot($, on, w => w.files.set(ROWS_FILE, real))
+    await boot($, on, w => w.files.set(ROWS_FILE, pinSyncOff(real)))
     expect(summarize(await paneView($))).toEqual(WORLD_89)
   })
 
   test('rows that are off are not collected: no git for dir and repo, no /proc for sys', async ($, on) => {
-    const { world } = await boot($, on, w => w.files.set(ROWS_FILE, '{"dir":false,"repo":false,"sys":false}'))
+    const { world } = await boot($, on, w => w.files.set(ROWS_FILE, pinSyncOff('{"dir":false,"repo":false,"sys":false}')))
 
     expect(world.ran.filter(r => r.argv[0] === 'git')).toEqual([])
     expect(world.reads).not.toContain('/proc/stat')
@@ -332,7 +333,7 @@ describe('#8 row toggles through the rows file', () => {
   })
 
   test('a pair with one side off gives the other the full width', async ($, on) => {
-    await boot($, on, w => w.files.set(ROWS_FILE, '{"dir":false,"repo":false}'))
+    await boot($, on, w => w.files.set(ROWS_FILE, pinSyncOff('{"dir":false,"repo":false}')))
     const parts = await paneView($, 49)
     expect(parts.cards.map(c => [c.title, c.width])).toEqual([
       ['', 47],
@@ -347,7 +348,7 @@ describe('#8 row toggles through the rows file', () => {
   })
 
   test('cost off leaves the tokens row, usage off the $ row: the card is TOKENS or COST, and with both off it is gone', async ($, on) => {
-    await boot($, on, w => w.files.set(ROWS_FILE, '{"cost":false}'))
+    await boot($, on, w => w.files.set(ROWS_FILE, pinSyncOff('{"cost":false}')))
     const costOff = await paneView($)
     expect(costOff.cards.map(c => c.title)).toEqual(['', 'PROGRESS', 'CONTEXT', '5H', '7D', 'TOKENS', 'GIT', 'ACTIVITY', 'SYSTEM'])
     expect(cardOf(costOff, 'TOKENS').body).toEqual(['─'.repeat(25), `tokens${' '.repeat(4)} 32.0K≈  33.5K≈`])
@@ -355,14 +356,14 @@ describe('#8 row toggles through the rows file', () => {
   })
 
   test('usage off leaves the $ row under COST, and takes CONTEXT with it', async ($, on) => {
-    await boot($, on, w => w.files.set(ROWS_FILE, '{"usage":false}'))
+    await boot($, on, w => w.files.set(ROWS_FILE, pinSyncOff('{"usage":false}')))
     const usageOff = await paneView($)
     expect(usageOff.cards.map(c => c.title)).toEqual(['', 'PROGRESS', '5H', '7D', 'COST', 'GIT', 'ACTIVITY', 'SYSTEM'])
     expect(cardOf(usageOff, 'COST').body).toEqual(['─'.repeat(25), `$${' '.repeat(10)}   3.50  10.25`])
   })
 
   test('with cost and usage both off there is no COST or TOKENS card', async ($, on) => {
-    await boot($, on, w => w.files.set(ROWS_FILE, '{"cost":false,"usage":false}'))
+    await boot($, on, w => w.files.set(ROWS_FILE, pinSyncOff('{"cost":false,"usage":false}')))
     const both = await paneView($)
     expect(both.cards.map(c => c.title)).toEqual(['', 'PROGRESS', '5H', '7D', 'GIT', 'ACTIVITY', 'SYSTEM'])
   })
@@ -512,7 +513,7 @@ describe('#13 a collector that fails', () => {
 
   test('a failure behind rows that are switched off is not counted: with cost and usage off only the lines show it', async ($, on) => {
     await boot($, on, w => {
-      w.files.set(ROWS_FILE, '{"cost":false,"usage":false}')
+      w.files.set(ROWS_FILE, pinSyncOff('{"cost":false,"usage":false}'))
       w.denyWrite.add('/tmp/claude-cum-c07353bf22c447df82966f2d.json')
     })
 
@@ -526,7 +527,7 @@ describe('#13 a collector that fails', () => {
 
   test('the tokens row is the usage toggle\'s: with cost off it still shows its failure and counts it', async ($, on) => {
     await boot($, on, w => {
-      w.files.set(ROWS_FILE, '{"cost":false}')
+      w.files.set(ROWS_FILE, pinSyncOff('{"cost":false}'))
       w.denyWrite.add('/tmp/claude-cum-c07353bf22c447df82966f2d.json')
     })
 
@@ -968,7 +969,7 @@ describe('R13 ~/.gemini first, as statusline.js resolves it', () => {
 
   test('the rows file and the shared rate-limit file in ~/.gemini win over the ~/.claude copies', async ($, on) => {
     const { world } = await boot($, on, w => {
-      w.files.set('/root/.gemini/cc-statusline-rows.json', '{"quota":false}')
+      w.files.set('/root/.gemini/cc-statusline-rows.json', pinSyncOff('{"quota":false}'))
       w.files.set(ROWS_FILE, '{"enabled":false}')
       w.files.set('/root/.gemini/rate-limit-snapshots.json', JSON.stringify({ other: entry(Math.floor(MOCKUP_AT / 1000) + 9000) }))
     })

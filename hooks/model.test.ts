@@ -425,6 +425,7 @@ describe('#8 row toggles file', () => {
     for (const text of [null, '', '{"enabled":', 'null', '[1]']) {
       const t = parseToggles(text)
       expect(t.enabled).toBe(true)
+      expect(t.rows.sync).toBe(true)
       expect(off(t)).toEqual([])
     }
   })

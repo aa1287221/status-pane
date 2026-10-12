@@ -28,6 +28,7 @@ import { DEFAULT_AT, adviceOf, fillOf, modeLabel } from './compact'
 import { keepLabel } from './keeplist'
 import type { CompactState, KeepState } from './state'
 import { ageText } from './sidefile'
+import { SYNC_FETCH_OLD_SEC, syncHead } from './sync'
 import type { AgentGroup, InflightState, NowState, Res, Snap } from './state'
 
 export type Seg = { text: string; color?: string; dim?: boolean; bold?: boolean }
@@ -49,7 +50,7 @@ export type PaneView = {
   keep?: KeepState | null
 }
 
-export type CardId = 'header' | 'context' | '5h' | '7d' | 'cost' | 'git' | 'activity' | 'system' | 'progress' | 'fixture' | 'status'
+export type CardId = 'header' | 'context' | '5h' | '7d' | 'cost' | 'git' | 'activity' | 'system' | 'progress' | 'sync' | 'fixture' | 'status'
 
 /** A body row: a label/value split, a left-packed line, a gauge (`null` is the bare track), or the CPU chart row. */
 export type CardRow =
@@ -576,6 +577,37 @@ const bgRows = (bg: Res<Inflight>, inner: number): CardRow[] => {
   return rows
 }
 
+/** The SYNC card: the headline, then ahead and behind of sync-data-v2 against its last fetch, with the age of each reading. */
+const syncCard = (snap: Snap, width: number, inner: number, c: Ctx): Card => {
+  const r = snap.sync
+  if (!r) return { id: 'sync', width, rows: [titleRow('SYNC', null, inner)] }
+  if (!r.ok) return { id: 'sync', width, rows: [titleRow('SYNC', null, inner), ...naRows(r.why, inner)] }
+  const v = r.v
+  const head = syncHead(v)
+  const nowSec = c.nowMs / 1000
+  const ago = (sec: number) => `${ageText(Math.max(0, Math.floor(nowSec - sec)))} ago`
+  const fetchOld = v.lastFetchSec === null || nowSec - v.lastFetchSec > SYNC_FETCH_OLD_SEC
+  return {
+    id: 'sync',
+    width,
+    rows: [
+      titleRow('SYNC', seg(head.text, { color: PALETTE[head.tone] }), inner),
+      ...kv('ahead', [plain(String(v.ahead))], inner),
+      ...kv('behind', [plain(String(v.behind))], inner),
+      ...kv('last push', v.lastPushSec === null ? [dim('n/a（無推送紀錄）')] : [plain(`${ago(v.lastPushSec)} · ${fmtClock(v.lastPushSec * 1000, c.tzMin, false)}`)], inner),
+      ...kv(
+        'fetched',
+        v.lastFetchSec === null
+          ? [dim('n/a（無 fetch 紀錄）')]
+          : [seg(`${ago(v.lastFetchSec)} · ${fmtClock(v.lastFetchSec * 1000, c.tzMin, false)}`, fetchOld ? { color: PALETTE.yellow } : {})],
+        inner,
+      ),
+      ...kv('age', [plain(ageText(Math.max(0, Math.floor(nowSec - v.observedAtSec))))], inner),
+      ...kv('observed', [plain(fmtClock(v.observedAtSec * 1000, c.tzMin, true))], inner),
+    ],
+  }
+}
+
 /** The demo card of the side file path: the count the file holds, its age at this draw and when it was observed. */
 const fixtureCard = (snap: Snap, width: number, inner: number, c: Ctx): Card => {
   const r = snap.fixture
@@ -960,14 +992,15 @@ export const paneLayout = (snap: Snap | null, view: PaneView): Layout => {
       activity: on.agents || on.edited,
       system: on.sys || on.memory_mcp,
       progress: on.progress && c.progress !== null,
+      sync: snap.sync !== undefined,
       fixture: snap.fixture !== undefined,
     }
     const bands: BandId[][] =
       tier === 'narrow'
-        ? [['progress'], ['context'], ['5h'], ['7d'], ['cost'], ['git'], ['activity'], ['system'], ['fixture']]
+        ? [['progress'], ['context'], ['5h'], ['7d'], ['cost'], ['git'], ['activity'], ['system'], ['sync'], ['fixture']]
         : tier === 'medium'
-          ? [['progress'], ['context'], ['5h', '7d'], ['cost', 'git'], ['activity'], ['system'], ['fixture']]
-          : [['progress'], ['context', '5h', '7d'], ['cost', 'git', 'activity'], ['system'], ['fixture']]
+          ? [['progress'], ['context'], ['5h', '7d'], ['cost', 'git'], ['activity'], ['system'], ['sync'], ['fixture']]
+          : [['progress'], ['context', '5h', '7d'], ['cost', 'git', 'activity'], ['system'], ['sync'], ['fixture']]
     const build = (id: BandId, width: number): Card => {
       const inner = innerOf(width)
       if (id === 'context') return contextCard(snap, width, inner, view.compact ?? null, view.keep ?? null)
@@ -976,6 +1009,7 @@ export const paneLayout = (snap: Snap | null, view: PaneView): Layout => {
       if (id === 'git') return gitCard(snap, width, inner)
       if (id === 'activity') return activityCard(snap, width, inner, c)
       if (id === 'progress') return progressCard(width, inner, c.progress!, c.inflight)
+      if (id === 'sync') return syncCard(snap, width, inner, c)
       if (id === 'fixture') return fixtureCard(snap, width, inner, c)
       return systemCard(snap, width, inner, c, true)
     }
