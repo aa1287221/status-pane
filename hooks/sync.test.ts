@@ -561,6 +561,17 @@ describe('sync-status: the mod starts the producer every five minutes (#91)', ()
     expect(debugLines(world).filter(t => /sync-status/.test(t))).toEqual([])
   })
 
+  test('"enabled": false: the producer is never started either, however long the mod runs', async ($, on) => {
+    const { world, advance } = await boot($, on, w => {
+      w.files.set(ROWS, '{"enabled":false}')
+      w.files.set(PROD, '# producer')
+      w.procs.set(ARGV.join(' '), { exitCode: 0 })
+    })
+    await advance(3 * MIN5)
+    expect(starts(world).length).toBe(0)
+    expect(debugLines(world).filter(t => /sync-status/.test(t))).toEqual([])
+  })
+
   test('CLAUDE_CONFIG_DIR, when set, is the directory the producer is started from', async ($, on) => {
     const { world, advance } = await boot($, on, w => {
       w.files.delete(ROWS)
