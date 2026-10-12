@@ -39,6 +39,8 @@ const dispatch = (running: number, stale = 0, warn: number | null = null): Res<D
 const MISSING: Res<Dispatch> = { ok: false, why: 'agents file missing' }
 const UNREADABLE: Res<Dispatch> = { ok: false, why: 'agents file unreadable' }
 const squash = (s: string) => s.replace(/\s/g, '')
+/** The count on the pane's red chip, read from the drawn lines; no chip is 0. */
+const errorsOf = (lines: string[]): number => Number(/(\d+) errors?\b/.exec(lines.join('\n'))?.[1] ?? 0)
 
 /** A tracker entry; `agoMs` is how long before T0 it started (negative: in the future), omitted: no `started`. */
 const entry = (agoMs: number | undefined, status = 'running', name = 'general-purpose') => ({
@@ -231,13 +233,13 @@ describe('dispatch: through the engine', () => {
     expect(squash(cardOf(await paneView($, 89), 'ACTIVITY').body.join(''))).toContain(squash('in-flight9'))
   })
 
-  test('a missing tracker with the hook wired reads n/a（agents file missing） and does not read 0', async ($, on) => {
+  test('a missing tracker with the hook wired reads n/a（agents file missing）, does not read 0, and is not an error', async ($, on) => {
     await boot($, on, w => {
       w.now = T0
       w.files.delete(TRACKER)
     })
     expect(squash(cardOf(await paneView($, 89), 'ACTIVITY').body.join(''))).toContain(squash('in-flight n/a（agents file missing）'))
-    expect((await paneText($, 89)).join('\n')).toMatch(/1 error\b/)
+    expect(errorsOf(await paneText($, 89))).toBe(0)
   })
 
   for (const { columns, tier } of WIDTHS) {
@@ -281,4 +283,94 @@ describe('dispatch: through the engine', () => {
     expect(squash(cardOf(unwired, 'ACTIVITY').body.join(''))).toContain(squash('agents n/a'))
     expect((await paneText($, 89)).join('\n')).toMatch(/1 error\b/)
   })
+})
+
+// Same class as the SYNC card (#29): a file absent by design is shown n/a but is not an error; every fault still counts one.
+describe('dispatch: which tracker n/a counts as a SYSTEM error', () => {
+  /** One draw at 89 columns: the ACTIVITY card without spaces, and the count on the red chip. */
+  const shown = async ($: Parameters<typeof paneView>[0]) => ({
+    activity: squash(cardOf(await paneView($, 89), 'ACTIVITY').body.join('')),
+    errors: errorsOf(await paneText($, 89)),
+  })
+
+  const CASES: { name: string; edit: (w: World) => void; inflight: string; agents: string; errors: number }[] = [
+    {
+      name: 'no file yet (the hook is wired, no SubagentStart has run): n/a（agents file missing）, no error',
+      edit: w => {
+        w.files.delete(TRACKER)
+      },
+      inflight: 'in-flight n/a（agents file missing）',
+      agents: 'agents idle',
+      errors: 0,
+    },
+    {
+      name: 'a file cut off mid-write: n/a（agents file unreadable）, one error',
+      edit: w => {
+        w.files.set(TRACKER, tracker(...fresh(2)).slice(0, 20))
+      },
+      inflight: 'in-flight n/a（agents file unreadable）',
+      agents: 'agents idle',
+      errors: 1,
+    },
+    {
+      name: 'valid JSON that is not an object: n/a（agents file unreadable）, one error',
+      edit: w => {
+        w.files.set(TRACKER, '[]')
+      },
+      inflight: 'in-flight n/a（agents file unreadable）',
+      agents: 'agents idle',
+      errors: 1,
+    },
+    {
+      name: 'a file the engine refuses to read: n/a（agents file unreadable）, the agents row n/a too, one error',
+      edit: w => {
+        w.files.set(TRACKER, tracker(...fresh(2)))
+        w.denyRead.add(TRACKER)
+      },
+      inflight: 'in-flight n/a（agents file unreadable）',
+      agents: 'agents n/a',
+      errors: 1,
+    },
+    {
+      name: 'an existence check the engine refuses: the row failed to collect, one error',
+      edit: w => {
+        w.files.set(TRACKER, tracker(...fresh(2)))
+        w.denyExists.add(TRACKER)
+      },
+      inflight: 'in-flight n/a（EACCES',
+      agents: 'agents n/a',
+      errors: 1,
+    },
+    {
+      name: 'the hook not wired: n/a on both rows, one error between them',
+      edit: w => {
+        unwire(w, 'subagent-tracker.js')
+      },
+      inflight: 'in-flight n/a（subagent-tracker.js hook not configured）',
+      agents: 'agents n/a',
+      errors: 1,
+    },
+    {
+      name: 'a healthy file: the count, no error',
+      edit: w => {
+        w.files.set(TRACKER, tracker(...fresh(3)))
+      },
+      inflight: 'in-flight3',
+      agents: 'agent-0 ○',
+      errors: 0,
+    },
+  ]
+
+  for (const c of CASES) {
+    test(c.name, async ($, on) => {
+      await boot($, on, w => {
+        w.now = T0
+        c.edit(w)
+      })
+      const { activity, errors } = await shown($)
+      expect(activity).toContain(squash(c.inflight))
+      expect(activity).toContain(squash(c.agents))
+      expect(errors).toBe(c.errors)
+    })
+  }
 })
