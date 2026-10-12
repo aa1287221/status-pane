@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import type { RenderSurface } from 'claude-code'
 
 import { FILES } from './sidefile.fixtures'
-import { boot, cardOf, makeSnap, mountPane, pair, paneView } from './fixture'
+import { boot, cardOf, makeSnap, mountPane, pair, paneView, pinSyncOff } from './fixture'
 import { fmtClock } from './model'
 import { layoutTree, paneLayout } from './pane'
 import type { Layout } from './pane'
@@ -103,7 +103,7 @@ describe('the fixture card: side file to card through the engine', () => {
   const valid = FILES['fixture.valid.json']!
   const withFile = (text: string | null, rows = '{"fixture":true}') => (w: { files: Map<string, string>; now: number }) => {
     w.now = REF_NOW
-    w.files.set(ROWS_FILE, rows)
+    w.files.set(ROWS_FILE, pinSyncOff(rows))
     if (text !== null) w.files.set(PATH, text)
   }
 
@@ -188,6 +188,12 @@ describe('the fixture card: side file to card through the engine', () => {
 
   test('a failing fixture counts as one error, like any row that is on', async ($, on) => {
     await boot($, on, withFile(null))
+    const lines = renderTree(await mountPane($, 89).then(u => u.drawn()), 89).join('\n')
+    expect(lines).toMatch(/1 error\b/)
+  })
+
+  test('a stale fixture counts as one error too: only the SYNC card leaves a missing or a stale file out', async ($, on) => {
+    await boot($, on, withFile(FILES['fixture.stale.json']!))
     const lines = renderTree(await mountPane($, 89).then(u => u.drawn()), 89).join('\n')
     expect(lines).toMatch(/1 error\b/)
   })

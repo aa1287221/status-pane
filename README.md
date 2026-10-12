@@ -2,7 +2,7 @@
 
 Claude Code 的 function-hooks mod，用來取代原生的 `statusLine`（cc-statusline 的 `statusline.js`）：
 
-- **右側 pane**：卡片式儀表板。卡片用引擎畫的 `Box`，進度條用 truecolor 的 `Raster`。卡片包括 PROGRESS（NOW 列：目前的工具與經過時間；BG 列：背景 shell、排程等了多久；權限對話框：-p 下 PermissionRequest 沒有觸發、TUI 還沒驗，PERM 列固定印 `n/a（原因）`）、CONTEXT、5H、7D、COST、GIT、ACTIVITY、SYSTEM，依寬度自動排成 1、2 或 3 欄，超出高度時用滑鼠捲動。
+- **右側 pane**：卡片式儀表板。卡片用引擎畫的 `Box`，進度條用 truecolor 的 `Raster`。卡片包括 PROGRESS（NOW 列：目前的工具與經過時間；BG 列：背景 shell、排程等了多久；權限對話框：-p 下 PermissionRequest 沒有觸發、TUI 還沒驗，PERM 列固定印 `n/a（原因）`）、CONTEXT、5H、7D、COST、GIT、ACTIVITY、SYSTEM、SYNC，依寬度自動排成 1、2 或 3 欄，超出高度時用滑鼠捲動。
 - **ACTIVITY 的 in-flight 列**：本 session 還在跑的 subagent 數，不設固定上限。要警示就設環境變數 `STATUS_PANE_INFLIGHT_WARN=<正整數>`（可放在 `settings.json` 的 `env`），超過該數時變紅色 `N over T`；沒設、空白、0、負數或非整數都不警示。標 running 超過 30 分鐘的列為 `stale`，不計入。
 - **prompt 下方提示行的尾巴**：一行精簡資訊，例如 `ctx 4% · 5h 20% · 7d 74% · $0.33 · 21:09`，被 `/diff` 或其他 pane 擋住時仍看得到。
 
@@ -39,6 +39,7 @@ Claude Code 的 function-hooks mod，用來取代原生的 `statusLine`（cc-sta
 - `/progress`：回合進行中也立即印出目前的工具與經過時間，以及背景工作（來源是上一次回合結束的快照）（和 PROGRESS 卡同一份資料，不經模型）；資料缺失時印 `n/a（原因）`。
 - `~/.claude/cc-statusline-rows.json` 可以逐列關閉；設成 `"enabled": false` 會整個停用，什麼都不收集、不寫入。
 - 加上 `"fixture": true`（只認布林 true，`1`、`"yes"` 不算）會多出一張 FIXTURE 卡，讀 `$TMPDIR/claude-side/fixture.json`（side file 契約的示範，預設關閉）；檔案缺少、過期或損毀時，卡片顯示 `n/a（原因）`。
+- SYNC 卡（claude-memory 與 `origin/sync-data-v2` 的領先／落後、上次 push 與 fetch 時間）預設開啟，提示列也會先顯示 `SYNC -N PULL`。資料來自 `~/.claude/scripts/hooks/sync-status.py`，只讀本地 ref，不連網。沒有這支 producer 的機器上，卡片顯示 `n/a（缺檔）`；超過 15 分鐘沒有重寫（producer 只在 hook 執行時寫檔）則顯示 `n/a（過期 …）`。這兩種是預期中的狀態，只顯示、不算錯誤；其他 n/a（收集失敗、格式錯誤、檔案損毀等）算 SYSTEM 的一個錯誤。要關掉就在 `~/.claude/cc-statusline-rows.json` 加上 `"sync": false`，卡片、提示列的 SYNC 段與可能有的錯誤都會一起消失。
 
 ## 開發
 

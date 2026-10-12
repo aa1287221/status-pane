@@ -275,10 +275,15 @@ export const NOW_SEC = Math.floor(MOCKUP_AT / 1000)
 
 const iso = (sec: number) => new Date(sec * 1000).toISOString()
 
-/** A healthy session: every row of the SPEC mockup has data, nothing is on disk that should not be. */
+/** The rows file text with the SYNC row pinned off; the row is on by default, so tests about other rows pin it. */
+export const pinSyncOff = (rows: string): string => JSON.stringify({ ...JSON.parse(rows), sync: false })
+
+/** A healthy session: every row of the SPEC mockup has data and no side file is on disk. Its rows file holds only `"sync": false`, which keeps the on-by-default SYNC card out. */
 export const makeWorld = (): World => {
   const files = new Map<string, string>()
   const put = (path: string, text: string) => files.set(path, text)
+  // SYNC has its own tests (sync.test.ts); here it is off so the cards and error counts stay as they were
+  put('/root/.claude/cc-statusline-rows.json', pinSyncOff('{}'))
   put('/root/.claude/CLAUDE.md', '# global')
   put(`${CWD}/CLAUDE.md`, '# project')
   for (const f of ['a.md', 'b.md', 'c.md', 'notes.txt']) put(`${CWD}/.claude/rules/${f}`, 'r')
