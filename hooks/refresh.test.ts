@@ -8,6 +8,7 @@ import {
   HEADER_89_MODEL,
   MOCKUP_AT,
   NOW_SEC,
+  QUIET_HINT,
   SID,
   TURN_DONE,
   WORLD_89,
@@ -129,7 +130,7 @@ describe('the cum file', () => {
     await clock.settle()
 
     const context = cardOf(await paneView($), 'CONTEXT')
-    expect([context.value, context.body]).toEqual(['—', ['░'.repeat(25), spread('used', '— / 200.0K', 25), spread('compact', '2', 25)]])
+    expect([context.value, context.body]).toEqual(['—', ['░'.repeat(25), spread('used', '— / 200.0K', 25), spread('compact', '2', 25), QUIET_HINT]])
     expect(await hintText($)).toMatch(/^\? for shortcuts\|5h 23% · 7d 61% · \$3\.50 · \d\d:\d\d$/)
   })
 
@@ -1202,6 +1203,8 @@ describe('agents and edited rows', () => {
       w.files.delete(`/tmp/claude-agents-${SID}.json`)
       w.files.delete(`/tmp/claude-files-${SID}.json`)
     })
-    expect(await bodyOf($, 'ACTIVITY')).toEqual([spread('agents', 'idle', 24), spread('edited', 'idle', 24)])
+    const body = await bodyOf($, 'ACTIVITY')
+    expect(body.slice(-2)).toEqual([spread('agents', 'idle', 24), spread('edited', 'idle', 24)])
+    expect(body.slice(0, -2).join('').replace(/\s/g, '')).toBe('in-flightn/a（agentsfilemissing）')
   })
 })

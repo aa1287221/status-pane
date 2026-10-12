@@ -134,6 +134,8 @@ export type World = {
   denyWrite: Set<string>
   /** Directories whose listing is refused. */
   denyList: Set<string>
+  /** Paths whose existence check is refused. */
+  denyExists: Set<string>
   /** Makes every `mv` exit 1, so the atomic write has to fall back. */
   denyMv: boolean
   /** Makes the `mv` onto these paths exit 1. */
@@ -205,10 +207,13 @@ export const cardOf = (parts: PaneParts, title: string): CardView =>
 /** The header card: the model and the liveness, then the summary. */
 export const headerOf = (parts: PaneParts): CardView => parts.cards[0] ?? cardOf(parts, '')
 
+/** The CONTEXT card's hint while usage is under the line: always drawn, one row at every width the fixtures use. */
+export const QUIET_HINT = '達 60% 建議 /compact'
+
 /** The pane of a healthy `makeWorld()` after its first refresh at 89 columns (wide), as `summarize` reads it. */
 export const WORLD_89: PaneSummary = {
   cards: {
-    CONTEXT: { value: '3%', body: [`▊${'░'.repeat(24)}`, pair('used', '32.0K / 1.0M', 25), pair('compact', '2', 25)] },
+    CONTEXT: { value: '3%', body: [`▊${'░'.repeat(24)}`, pair('used', '32.0K / 1.0M', 25), pair('compact', '2', 25), QUIET_HINT] },
     '5H': { value: '23%', body: [`█████▌${'░'.repeat(18)}`, ...resetsLines('2h 10m', clockAfter(MOCKUP_AT, 7800, false), 24)] },
     '7D': { value: '61%', body: [`${'█'.repeat(14)}▋${'░'.repeat(9)}`, ...resetsLines('3d 4h', clockAfter(MOCKUP_AT, 3 * 86_400 + 4 * 3600, true), 24)] },
     COST: {
@@ -222,6 +227,7 @@ export const WORLD_89: PaneSummary = {
     ACTIVITY: {
       value: '',
       body: [
+        pair('in-flight', '0 · 1 stale', 24),
         pair('agents', 'general-purp ○', 24),
         right('Explore ✓×2', 24),
         right('5m ago', 24),
@@ -245,7 +251,7 @@ export const HEADER_89_DETAIL = '遷移 statusline 到 mod pane 的討論與實�
 /** The same at 49 columns (medium): the full matrix needs 23 cells here and COST can have 22, so it reads sess and tok; GIT keeps 18. */
 export const WORLD_49: PaneSummary = {
   cards: {
-    CONTEXT: { value: '3%', body: [`█▎${'░'.repeat(41)}`, pair('used 32.0K / 1.0M', 'compact 2', 43)] },
+    CONTEXT: { value: '3%', body: [`█▎${'░'.repeat(41)}`, pair('used 32.0K / 1.0M', 'compact 2', 43), QUIET_HINT] },
     '5H': { value: '23%', body: [`████▍${'░'.repeat(14)}`, ...resetsLines('2h10m', clockAfter(MOCKUP_AT, 7800, false), 19)] },
     '7D': { value: '61%', body: [`${'█'.repeat(11)}▋${'░'.repeat(7)}`, ...resetsLines('3d4h', clockAfter(MOCKUP_AT, 3 * 86_400 + 4 * 3600, true), 19)] },
     COST: {
@@ -258,7 +264,7 @@ export const WORLD_49: PaneSummary = {
     },
     ACTIVITY: {
       value: '',
-      body: [pair('agents', 'general-purp ○', 43), right('Explore ✓×2 5m ago', 43), pair('edited', 'register.tsx → SPEC.md →', 43), right('settings.json', 43)],
+      body: [pair('in-flight', '0 · 1 stale', 43), pair('agents', 'general-purp ○', 43), right('Explore ✓×2 5m ago', 43), pair('edited', 'register.tsx → SPEC.md →', 43), right('settings.json', 43)],
     },
     SYSTEM: {
       value: '',
@@ -353,6 +359,7 @@ export const makeWorld = (): World => {
     denyRead: new Set(),
     denyWrite: new Set(),
     denyList: new Set(),
+    denyExists: new Set(),
     denyMv: false,
     denyMvFor: new Set(),
     denyEnv: new Set(),
@@ -447,9 +454,10 @@ export const installWorld = (on: On, world: World): { clock: MockClock; advance:
     return { value: world.openResult }
   })
 
-  on('fs.exists', (_$, e) => ({
-    value: world.files.has(e.path) || [...world.files.keys()].some(k => k.startsWith(`${e.path}/`)),
-  }))
+  on('fs.exists', (_$, e) => {
+    if (world.denyExists.has(e.path)) return { deny: `EACCES: permission denied, stat '${e.path}'` }
+    return { value: world.files.has(e.path) || [...world.files.keys()].some(k => k.startsWith(`${e.path}/`)) }
+  })
   on('fs.stat', (_$, e) => {
     const text = world.files.get(e.path)
     if (text === undefined) return { deny: `ENOENT: no such file or directory, stat '${e.path}'` }
@@ -485,7 +493,7 @@ export const installWorld = (on: On, world: World): { clock: MockClock; advance:
     const entries: FsEntry[] = []
     for (const path of world.files.keys()) {
       if (dirOf(path) === dir) {
-        entries.push({ name: path.slice(dir.length + 1), kind: 'file', size: 1, mtimeMs: 0, isLink: false })
+        entries.push({ name: path.slice(dir.length + 1), kind: 'file', size: new TextEncoder().encode(world.files.get(path) ?? '').length, mtimeMs: 0, isLink: false })
       }
     }
     return { value: entries }

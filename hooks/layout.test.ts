@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { MOCKUP_AT, makeSnap, pair, right } from './fixture'
+import { MOCKUP_AT, QUIET_HINT, makeSnap, pair, right } from './fixture'
 import { dw, tailText } from './model'
 import {
   BORDER,
@@ -604,7 +604,7 @@ describe('the gauge cards', () => {
   test('CONTEXT: the percentage in the title, the bar, then used and compact as two label/value pairs on one row', () => {
     const c = card(makeSnap(), 49, 'CONTEXT')
     expect(c.value).toBe('3%')
-    expect(c.body).toEqual([`█▎${'░'.repeat(41)}`, pair('used 32.0K / 1.0M', 'compact 0', 43)])
+    expect(c.body).toEqual([`█▎${'░'.repeat(41)}`, pair('used 32.0K / 1.0M', 'compact 0', 43), QUIET_HINT])
   })
 
   test('the compact count is always told, 0 included, flush against the right edge', () => {
@@ -616,22 +616,22 @@ describe('the gauge cards', () => {
 
   test('the pair goes to two rows only when it does not fit one: 29 cells hold it, 28 do not', () => {
     // a full-width card has columns - 6 cells inside
-    expect(card(makeSnap(), 35, 'CONTEXT').body.slice(1)).toEqual([pair('used 32.0K / 1.0M', 'compact 0', 29)])
-    expect(card(makeSnap(), 34, 'CONTEXT').body.slice(1)).toEqual([pair('used', '32.0K / 1.0M', 28), pair('compact', '0', 28)])
-    expect(card(makeSnap(), 89, 'CONTEXT').body.slice(1)).toEqual([pair('used', '32.0K / 1.0M', 25), pair('compact', '0', 25)])
+    expect(card(makeSnap(), 35, 'CONTEXT').body.slice(1)).toEqual([pair('used 32.0K / 1.0M', 'compact 0', 29), QUIET_HINT])
+    expect(card(makeSnap(), 34, 'CONTEXT').body.slice(1)).toEqual([pair('used', '32.0K / 1.0M', 28), pair('compact', '0', 28), QUIET_HINT])
+    expect(card(makeSnap(), 89, 'CONTEXT').body.slice(1)).toEqual([pair('used', '32.0K / 1.0M', 25), pair('compact', '0', 25), QUIET_HINT])
   })
 
   test('at w=36 (the 40-column dock) 127.8K / 1.0M and compact 12 still share one row, with a cell to spare; anything longer goes to two', () => {
     const wide = (used: number, compacts: number) => ctx({ used, compacts: { ok: true, v: compacts } })
     // 38 columns: w=36, 32 cells inside; 'used 127.8K / 1.0M' is 18, 'compact 12' is 10, and 3 between them
-    expect(card(wide(127_800, 12), 38, 'CONTEXT').body.slice(1)).toEqual([pair('used 127.8K / 1.0M', 'compact 12', 32)])
-    expect(card(wide(127_800, 123), 38, 'CONTEXT').body.slice(1)).toEqual([pair('used 127.8K / 1.0M', 'compact 123', 32)])
-    expect(card(wide(127_800, 1234), 38, 'CONTEXT').body.slice(1)).toEqual([pair('used', '127.8K / 1.0M', 32), pair('compact', '1234', 32)])
+    expect(card(wide(127_800, 12), 38, 'CONTEXT').body.slice(1)).toEqual([pair('used 127.8K / 1.0M', 'compact 12', 32), QUIET_HINT])
+    expect(card(wide(127_800, 123), 38, 'CONTEXT').body.slice(1)).toEqual([pair('used 127.8K / 1.0M', 'compact 123', 32), QUIET_HINT])
+    expect(card(wide(127_800, 1234), 38, 'CONTEXT').body.slice(1)).toEqual([pair('used', '127.8K / 1.0M', 32), pair('compact', '1234', 32), QUIET_HINT])
   })
 
   test('a compact count that cannot be had is told in the body, dim, and the gauge stays', () => {
     const c = card(ctx({ compacts: bad('compact-monitor.js hook not configured') }), 49, 'CONTEXT')
-    expect(c.body.slice(1)).toEqual([pair('used', '32.0K / 1.0M', 43), 'compact n/a (compact-monitor.js hook not', 'configured)'])
+    expect(c.body.slice(1)).toEqual([pair('used', '32.0K / 1.0M', 43), 'compact n/a (compact-monitor.js hook not', 'configured)', QUIET_HINT])
     expect(c.value).toBe('3%')
   })
 
@@ -639,7 +639,7 @@ describe('the gauge cards', () => {
     const snap = ctx({ pct: null, used: 0 })
     const c = card(snap, 49, 'CONTEXT')
     expect(c.value).toBe('—')
-    expect(c.body).toEqual(['░'.repeat(43), pair('used — / 1.0M', 'compact 0', 43)])
+    expect(c.body).toEqual(['░'.repeat(43), pair('used — / 1.0M', 'compact 0', 43), QUIET_HINT])
     // no fill in the Raster either: every cell is the track
     const gauge = nodesOf(treeAt(snap, 49), 'Raster').find(r => r.props?.key === 'gauge-context')!
     expect(rasterCells(gauge).every(c => c.fg === c.bg)).toBe(true)
@@ -1620,10 +1620,10 @@ describe('the elements: real Boxes with round borders, Texts, and Rasters where 
     expect(summary.props).toMatchObject({ wrap: 'truncate-end', dimColor: true })
   })
 
-  test('no glyph in the tree is wider than a cell but the CJK in the summary', () => {
+  test('no glyph in the tree is wider than a cell but the CJK in the summary and in the CONTEXT hint', () => {
     const tree = treeAt(makeSnap(), 89)
     const wide = nodes(tree, 'Text').filter(t => /[^\u0000-⿿]/.test(textOf(t)))
-    expect(wide.map(textOf)).toEqual(['遷移 statusline 到 mod pane 的討論與實作'])
+    expect(wide.map(textOf)).toEqual(['遷移 statusline 到 mod pane 的討論與實作', QUIET_HINT])
   })
 })
 
@@ -1768,6 +1768,7 @@ describe('goldens: the full snapshot, laid out as a terminal would', () => {
       "│ CONTEXT                     3% │",
       "│ ▉░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ │",
       "│ used 32.0K / 1.0M    compact 0 │",
+      "│ 達 60% 建議 /compact           │",
       "╰────────────────────────────────╯",
       "",
       "╭────────────────────────────────╮",
@@ -1833,6 +1834,7 @@ describe('goldens: the full snapshot, laid out as a terminal would', () => {
       "│ CONTEXT                       3% │",
       "│ █░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ │",
       "│ used 32.0K / 1.0M      compact 0 │",
+      "│ 達 60% 建議 /compact             │",
       "╰──────────────────────────────────╯",
       "",
       "╭──────────────────────────────────╮",
@@ -1898,6 +1900,7 @@ describe('goldens: the full snapshot, laid out as a terminal would', () => {
       "│ CONTEXT                       3% │",
       "│ █░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ │",
       "│ used 32.0K / 1.0M      compact 0 │",
+      "│ 達 60% 建議 /compact             │",
       "╰──────────────────────────────────╯",
       "",
       "╭──────────────────────────────────╮",
@@ -1962,6 +1965,7 @@ describe('goldens: the full snapshot, laid out as a terminal would', () => {
       "│ CONTEXT                                  3% │",
       "│ █▎░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ │",
       "│ used 32.0K / 1.0M                 compact 0 │",
+      "│ 達 60% 建議 /compact                        │",
       "╰─────────────────────────────────────────────╯",
       "╭─────────────────────╮ ╭─────────────────────╮",
       "│ 5H              23% │ │ 7D              61% │",
@@ -2005,6 +2009,7 @@ describe('goldens: the full snapshot, laid out as a terminal would', () => {
       "│ ▊░░░░░░░░░░░░░░░░░░░░░░░░ │ │ █████▌░░░░░░░░░░░░░░░░░░ │ │ ██████████████▋░░░░░░░░░ │",
       "│ used         32.0K / 1.0M │ │ resets    2h 10m · 04:51 │ │ resets             3d 4h │",
       "│ compact                 0 │ │                          │ │                Mon 06:41 │",
+      "│ 達 60% 建議 /compact      │ │                          │ │                          │",
       "╰───────────────────────────╯ ╰──────────────────────────╯ ╰──────────────────────────╯",
       "╭───────────────────────────╮ ╭──────────────────────────╮ ╭──────────────────────────╮",
       "│ COST       session  total │ │ GIT                      │ │ ACTIVITY                 │",
@@ -2037,6 +2042,7 @@ describe('goldens: the full snapshot, laid out as a terminal would', () => {
       "│ CONTEXT                                  3% │",
       "│ █▎░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ │",
       "│ used 32.0K / 1.0M                 compact 0 │",
+      "│ 達 60% 建議 /compact                        │",
       "╰─────────────────────────────────────────────╯",
       "╭─────────────────────╮ ╭─────────────────────╮",
       "│ 5H              23% │ │ 7D              61% │",
@@ -2130,6 +2136,7 @@ describe('the narrowest panes in a directory that is no repository', () => {
       "│ ▉░░░░░░░░░░░░░░░░░░░░░░░░░░░ │",
       "│ used            32.0K / 1.0M │",
       "│ compact                    0 │",
+      "│ 達 60% 建議 /compact         │",
       "╰──────────────────────────────╯",
       "",
       "╭──────────────────────────────╮",
@@ -2190,6 +2197,7 @@ describe('the narrowest panes in a directory that is no repository', () => {
       "│ CONTEXT                     3% │",
       "│ ▉░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ │",
       "│ used 32.0K / 1.0M    compact 0 │",
+      "│ 達 60% 建議 /compact           │",
       "╰────────────────────────────────╯",
       "",
       "╭────────────────────────────────╮",
@@ -2253,6 +2261,8 @@ describe('the narrowest panes in a directory that is no repository', () => {
       "│ ▌░░░░░░░░░░░░░░░░░ │",
       "│ used  32.0K / 1.0M │",
       "│ compact          0 │",
+      "│ 達 60% 建議        │",
+      "│ /compact           │",
       "╰────────────────────╯",
       "",
       "╭────────────────────╮",

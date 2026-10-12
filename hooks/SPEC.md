@@ -24,6 +24,10 @@ No `AbovePrompt` band: tw-stock-mod already answers that site without calling `n
                                patch line count; formatters; staleness; sid; the progress view (`progressOf`, `progressText`) and the in-flight view (`inflightOf`)
   hooks/pane.ts                pure view: snapshot -> `Layout` (cards as plain data) -> engine elements
                                (`paneLayout`, `layoutTree`); gauge and chart Raster encoders; text fitting
+  hooks/compact.ts             pure: the CONTEXT threshold hint and the /compact suggestion (fill, config, the compaction window the line is taken of, once per crossing, mode label)
+  hooks/compact.observed.ts    test-only: what the engine answered for the compaction window in 94 probe runs (Claude Code 2.1.296)
+  hooks/keeplist.ts            pure: the session.compact keep-list (switches, task files, recorded paths, the block and its budget, the decision, the task directory, the card value and the `/keeplist` text)
+  hooks/dispatch.ts            pure: the in-flight count from the agents tracker (`dispatchOf`) and the optional threshold from STATUS_PANE_INFLIGHT_WARN (`parseInflightWarn`); stale cutoff 30 min
   hooks/state.d.ts             $.state contract and the snapshot types (a hooks/-located contract is accepted)
   hooks/sidefile.ts            pure reader of the side file contract (hub SCHEMA.md v1): bytes + clock in, a verdict out; `SideIo` is its seam
   hooks/sidefile.fixtures.ts   test-only: embedded copies of the hub's hand-written fixtures (hub commit 6098494)
@@ -33,7 +37,7 @@ No `AbovePrompt` band: tw-stock-mod already answers that site without calling `n
   hooks/sync.ts                SYNC card and tail hint: the reader side of kind `sync-status` (#29)
   hooks/sync.test.ts, sync.fixtures.ts  tests and embedded copies of the hub's fixtures/sync-status (hub commit 8018801, checked by sha256) for the SYNC card (test-only)
   hooks/tree.ts                test-only: reads a drawn tree back as text and cards (shares nothing with pane.ts)
-  hooks/*.test.ts              `claude plugin test` suites (`progress.test.ts`: the PROGRESS card and `/progress`; `inflight.test.ts`: its BG and PERM rows)
+  hooks/*.test.ts              `claude plugin test` suites (`progress.test.ts`: the PROGRESS card and `/progress`; `inflight.test.ts`: its BG and PERM rows; `keeplist.test.ts`: the keep-list, its engine rows and its card row)
   hooks/SPEC.md                this file
 ```
 
@@ -191,12 +195,219 @@ Stop it reads `BG n/a（還沒有回合結束的快照）`.
   names is the id the Stop lists (source only, never observed); a task that starts and ends inside one turn never
   appears (it is in no snapshot).
 
+### CONTEXT hint and /compact suggestion (#30)
+
+The CONTEXT card always carries the threshold hint; at or over the threshold it turns into an alert in the fill's
+tone, and `session.measure` can pre-fill `/compact` in the box. Source levels (#9 correction applied; observed =
+a run of 2.1.296, specified = the type file or the settings schema, inferred = read from the source or reasoned):
+
+- **The window the line is taken of** is not `usage().context.window`. That is the model's own window (observed:
+  1000000 for the probed 1M models and 200000 for the 200K ones, whatever the settings say, in `usage()` and in
+  `session.measure`; specified: "the context window of the session's model"). The engine compacts at a window that can
+  be smaller, and `$.session.usage({ breakdown: 'summary' })` reports it as `rawMaxTokens` (observed: 400000 with
+  `modelSettings.claude-opus-5-5.autoCompactWindow` = 400000, auto-compact threshold 367000). A line of 60% of the
+  model's window would sit at 600K, past the point where the engine compacts. So the plugin works out the window from the
+  inputs the engine reads, in the engine's order (`effectiveWindow`; the table `compact.observed.ts` is the engine's answer to
+  94 combinations and the tests replay it):
+  1. `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, read as the engine reads it (observed: a leading integer, `4e5`, `300_000`;
+     `400k` reads 400 and is floored to 100000; `abc`, `0`, `-300000`, `0x30d40` and empty are skipped; floor 100000, cap
+     1000000; `300,000` with a comma is inferred). It comes before the settings, not after them (observed: `250000`
+     over a per-model `400000` gives `250000`).
+  2. The settings, source by source from the highest (`policy`, `flag`, `local`, `project`, `user`; the rank of
+     `policy` is inferred, the other four observed): the first source with a say decides. In one source the entry of
+     the model (`modelSettings.<name>.autoCompactWindow`) beats the top-level `autoCompactWindow`, and a top-level
+     value in a higher source replaces a lower source's entry (observed). `"auto"` for the model stands for the model's
+     window and ends the search (observed). An integer outside 100000..1000000, a float, a string or a top-level
+     `"auto"` is dropped as if absent, and does not reset what is below it (observed). Settings count only while
+     `autoCompactEnabled` is not false in the highest source that names it; the variable counts either way (observed).
+  3. The model's own window.
+
+  The result never exceeds the model's window (observed). The model is matched by its whole canonical name: dated,
+  `[1m]`, Vertex, Bedrock with a region prefix, upper case and spaces all spell one model, and a prefix such as
+  `claude-opus-5` is another (observed; Bedrock without a region prefix inferred). If the window itself is unknown
+  there is no line (null, never 0).
+- **Not mirrored**, each pinned as a known gap by its probe row: an alias key (`opus`, `sonnet`, `haiku`: the engine
+  resolves it to the current default model, observed), `DISABLE_COMPACT` and `DISABLE_AUTO_COMPACT` (the engine
+  turns auto-compact off, observed), a non-boolean `autoCompactEnabled` that voids the whole settings file in the
+  engine (observed), and the account, experiment and model-default sources, which a plugin cannot see (none moved the
+  window on the probed models). The card then takes the configured window. `breakdown.rawMaxTokens` is the engine's own
+  answer to all of it; the calls took 6 to 310 ms in the probe (observed, small sessions), so it is not polled here.
+- **Fill** = `tokens / base`, where `base` is that window and `tokens` is from the `session.measure` payload (observed:
+  `tokens` = the last response's input + cache read + cache creation, #9). `percent` is never used: an integer by
+  inference only (one sample, value 0). The card takes the same ratio of `snap.context.v.used` and
+  `snap.context.v.autoCompact.window`; a snapshot without that field is read against `max` as before. The title's
+  percentage and the gauge stay a share of the model's window, as in `statusline.js`; when the base is smaller, the
+  hint tells the line in tokens (`(240.0K)`) so the two are not confused.
+- **Threshold** 60% of the base, inclusive (specified: the figure in `~/.claude/commands/壓縮建議.md`), i.e. 240K of 400K
+  on this machine and 600K of 1M when nothing sets a window. `STATUS_PANE_CTX_AT=<1..99>` (whole numbers only; anything
+  else is 60). The card names the default 60 until the first measure has written the state.
+- **Where the base is worked out**: `refresh()` stores it on the snapshot (`context.autoCompact`, from the settings it has
+  just read, the variable and the session's model) for the card; the measure works it out afresh (five settings reads, the
+  variable, the model) so that a `/model` or a settings edit since the last refresh is not missed. Any input that cannot
+  be had leaves the model's window.
+- **Trigger**: `session.measure` fires once per main-loop turn (observed, #9); acts only when `changed`
+  includes `context`. Usage is re-read per response (inferred only, #9 correction).
+- **Mode** from `STATUS_PANE_CTX_SUGGEST` (specified): unset or other = `observe` (computes, records
+  `last.would`, draws the card, calls nothing); `1` = `suggest` (`$.prompt.suggest({ text: COMPACT_TEXT })`
+  once per crossing, never run); `0` = `off` (the card hint stays). Read at every measure.
+- **Once per crossing**: fires when the fill rises over the line; a drop under it re-arms (what a /compact
+  does); a new session id starts over. An answer of `isShown: false`, or a refusal, re-arms too, so the
+  next measure tries again. One call in flight; a 3 s guard releases the flag if the box never settles.
+- **`isShown`** (partially-supported, #9): the call is accepted (observed, headless); whether the grey text
+  shows in a live TUI is NOT observed. The card prints it: `on · shown`, `on · not shown`, `on · pending`.
+- **Gates**: rows file `enabled:false`, the `usage` row off, or no snapshot: nothing is computed or written.
+  Every error inside the hook is swallowed; the hook returns `next(e)` untouched (fail-open).
+
+The hint is a row of the CONTEXT card at every moment, under `used` and `compact`: `達 60% 建議 /compact` in dim
+under the line (also before the first response, and with `(240.0K)` after the percentage when the base is smaller than
+the model's window), `△ 已達 60% · 建議 /compact` in the fill's tone at or over it (never both), and then
+`suggest <mode>` when a state exists. A card that says why it has no usage (`n/a (...)`) carries no hint. The
+card mockups and the CONTEXT paragraph above this section predate the hint and show the card without its row.
+
+### Keep-list on session.compact (#31)
+
+A `session.compact` hook appends what the session still owes (its open tasks, its handoff files, the files it wrote or
+edited) to the instructions the summarizer is told, so the summary names them. It observes by default;
+`STATUS_PANE_KEEP=1` makes it write. Source levels (observed = a run of 2.1.296, specified = the type files,
+inferred = read from the bundle or reasoned):
+
+- **Observed, hub #10** (headless `-p`, a loopback stub that records the summarizer request, every verdict against a
+  no-mod control and against a run whose list file is missing): a `session.compact` hook that appends text to
+  `instructions` reaches the summarizer on `trigger=manual` and on `trigger=auto`; on manual the person's `/compact`
+  text and the hook's text are both there; on auto `e.instructions` is **null**, so the list can be the only text;
+  `$.fs.read` works inside the hook; a message appended to the result's `messages` shows in the next request (not
+  used here, see the gaps).
+- **Observed here** (the test kit, 2026-10-12): `$.session.compact(...)` on the kit's `$` raises the event with
+  `trigger`, `agentId` and `instructions` as given; an empty `messages` is refused ("a compaction leaves at least
+  one"); `instructions: undefined` arrives as a key that is present and undefined, an omitted one is absent, so the
+  gate is `typeof e.instructions === 'string'` and never `'instructions' in e`; a plugin hook that throws is skipped
+  and the call goes on to what is beneath it (tried with a hook that throws at once: the engine below was reached with
+  the event as it came), while a handler at the bottom that throws leaves the caller `no implementation for
+  session.compact`; a `{ skip }` answer reaches the caller.
+- **Observed here** (this machine, 2026-10-12): a session's task list is `<config dir>/tasks/<full session id, dashes
+  kept>/<n>.json` beside `.lock` and `.highwatermark`; a file holds `{ id, subject, description, activeForm, status,
+  blocks, blockedBy }`, `id` and `subject` as text, `status` one of `pending`, `in_progress`, `completed`.
+- **Observed here** (the end-to-end probe under Acceptance, 2.1.296): the hook runs on a real compaction with `agentId`
+  absent for the main conversation (manual and auto: the block reached the summarizer, which it could not have if the
+  event carried one); `e.file_path` is on a `Write` and a `Read` event as the typings say; `$.state` was not restored
+  into a later process: `/keeplist` after a `/compact` in the same process prints the record, and in a later
+  `claude -p --continue` process of the same session id it says `no compaction seen`.
+- **Specified** (`index.d.ts`, 2.1.296): `precompute` is the one dispatch that installs nothing: its result is kept for
+  the next compaction if the conversation still holds what it ran over, and `{ skip }` there computes and keeps
+  nothing; `agentId` is absent for the main conversation and present for a subagent's or a fork's; a plugin's own
+  `$.session.compact()` skips the calling plugin's hook; the input key of Write, Edit and Read is `file_path` and
+  NotebookEdit's is `notebook_path` (`claude-code-tools/index.d.ts`).
+- **Inferred** (read from the 2.1.296 bundle, not run): the task list is named by `CLAUDE_CODE_TASK_LIST_ID`, else a
+  team's name, else a persisted leader team name, else the session id, every character outside `[A-Za-z0-9_-]`
+  becoming `-`. The plugin knows the first and the last; a team's or a resumed list is a directory it does not look in
+  (the state names the directory it did look in).
+- **Not proven**: any behaviour in a live TUI; whether a precompute is ever dispatched there (`seen.precompute`
+  counts them); whether a real summarizer keeps what it is told (the stub answers a canned summary). The manual TUI
+  check under Acceptance covers the last two.
+
+What it does:
+
+- **Switches**, read at every compaction: `STATUS_PANE_KEEP` unset or anything but `1` and `0` is `observe` (works out
+  what it would send, records it, changes nothing); `1` is `on`; `0` is the bypass of the compaction (no file read, no
+  `keep` written, the event passed on as it came). `STATUS_PANE_KEEP_PRECOMPUTE=rewrite` gives a precompute the list
+  like any other trigger; anything else answers it `{ skip }` under `on` (observe only records `would: skip`). The rows
+  file with `enabled:false` silences the hook the same way; no snapshot yet is not that switch. Neither switch reaches
+  the `tool.call` capture of written files and read handoffs (below), which records `kept` under both (31-37): they
+  stop the compaction work, not the capture.
+- **Decision** (`decideCompact`, pure), in this order: bypass, a trigger it does not know, `agentId` set (a subagent's
+  or a fork's own compaction) and instructions that already carry the block's first line (a second copy of the mod, the
+  same event passing twice) are left as they came; the rows file off is the same; then a precompute under the skip
+  policy: mode `on` answers `{ skip: 'status-pane keep-list: a precomputed summary would freeze the list' }` without
+  calling `next` and without reading any source, mode `observe` records `would: skip`; then the sources are read and
+  nothing to keep is left as it came (`empty`); else mode `on` calls `next` with the new instructions and mode
+  `observe` records `would: rewrite`. `next` is called once on every path but the skip, with the event as it came plus
+  `instructions`, so `trigger`, `agentId` and `messages` are the engine's. A failure of `next` is the engine's: it is
+  passed on and never retried.
+- **Precompute** (the ticket's acceptance item) is skipped by default: the engine keeps a precomputed summary for the
+  next compaction, and with instructions-only injection a summary made now would carry no list, or one that is stale
+  by the time it is used. The cost is the summarizer's whole latency at the real compaction (not measured; none if a
+  TUI never dispatches a precompute). `rewrite` trades that for a stale window from the precompute to the compaction
+  that uses it. Observe never changes a precompute. Specified, not observed: it never dispatched in `-p`.
+- **The text**, English, at most 1500 UTF-16 units, whole lines: `Keep these through the summary (copied from the
+  session):`, then `Open tasks:` (`- #<id> [<status>] <subject>`), `Handoff files to re-read:` (`- <path>`) and
+  `Files written or edited (newest first):` (`- <path>`). A section with nothing in it has no title and nothing at all
+  is no text (never a header alone). What does not fit goes from the end, files first, then handoffs, then tasks, and
+  a last line `(+N more)` counts it; the order is by value, not the ticket's order of mention, so the cap costs the
+  least. A handoff that was also written is named once. With the person's text: theirs first and byte for byte, a blank
+  line, the block. Without (auto): the block alone, no leading newline.
+- **Open tasks**: `<config dir>/tasks/<list id>/<id>.json`, the config dir being `CLAUDE_CONFIG_DIR`, else
+  `$HOME/.claude`. Only `<id>.json` (the engine's spelling) is read, never `.lock`, `.highwatermark`, a dotfile or a
+  backup; the newest 200 ids at most, 25 at a time, none over 64 KiB. `pending` and `in_progress` are kept (in progress
+  first, then by id, 15 at most, the rest counted); the subject becomes one line of at most 100 code points (hidden
+  characters, line and paragraph separators, bidi controls and the tag plane become a space); nothing else of the file
+  is used. A directory that is not there is no task and not a problem (a session that never made one). A directory that
+  cannot be listed is a problem; so is a file that cannot be read, is not JSON, is over 64 KiB, has an unknown status
+  or no usable id or subject (told by its name), and so is the cut at 200.
+- **Files and handoffs** come from the plugin's own `tool.call` hook, not from the transcript: a compaction takes the
+  calls out of it, and it does not hold a subagent's. A Write, Edit or NotebookEdit call that went through (no `deny`,
+  no `isError`, the test the BG row uses), a subagent's included, records its absolute path in `$.state` (`kept`; 20
+  at most, newest first, once each, under the session id; a path with a control or bidi character, over 400
+  characters, or inside `node_modules` or `.git` is not recorded). A `handoff-<name>.md` that was written or **read**
+  is also a handoff (5 at most). Only this session's. The capture is not behind `STATUS_PANE_KEEP` or the rows file: it
+  records under `0`, under `enabled:false`, in observe and on alike (31-37, 31-27, 31-28). At a compaction the newest 10
+  files and the handoffs are checked with `$.fs.exists`: gone is left out and counted, a check that is refused keeps
+  the path (unknown is not absent). Files made by `Bash` (a redirect, a script) are not listed.
+- **Fail-open**: the switches, the decision, the reads and the state write are one piece of work held to **4 s** with
+  `$.clock.after` (the engine's 10 s hook budget does not count the time of a `$` call, so a hung call would stall the
+  compaction). A throw, a refusal or the deadline hands `next` the event as it came, once; an answer that arrives
+  after the deadline is dropped and writes nothing; if the timer cannot be armed the compaction goes on as it came.
+  The engine itself skips a hook that throws (observed in the test kit); this does not rely on that.
+- **State and readout**: `keep` (`KeepState`: session, switches, `seen` per trigger, and `last`: time, trigger,
+  action, why, `would`, counts, cut, gone, characters, the text, what each source was read from in words, problems)
+  is written once per compaction that is not silent, before `next`. Silent are the bypass, a trigger it does not
+  know, a subagent, the block already there and the rows file off. The CONTEXT card gets one `keep` row under the
+  hint: the mode, the trigger and what was found or done, whole at every width (under its word, wrapped, where it does
+  not fit one row), this session's state only, none with the mode off. `/keeplist` (immediate; state only: no model
+  call, no file read) prints the switches, the sightings, the last decision, each source in words and the text, or
+  `keeplist n/a (reason)` when the state cannot be read. Only task subjects, paths and counts are stored.
+- **Rollout and rollback**: the default is observe, so a merge changes the `keep` row, `/keeplist` and state writes and
+  nothing the engine is told. The switch to `on` is the owner's, per machine, after the manual check under Acceptance:
+  `STATUS_PANE_KEEP=1` in `~/.claude/settings.json` `env` (new sessions). Rollback, fastest first: `STATUS_PANE_KEEP=0`
+  (the compaction is left alone: no file read, no `keep` written; the capture goes on recording `kept` in `$.state`);
+  the rows file `enabled:false` (the same); revert the merge and pull, or take the folder out of
+  `CLAUDE_CODE_PLUGIN_DIRS` (either stops the capture too). The `keep` and `kept` keys are inert once the code is gone.
+  After a Claude Code upgrade: the hub's `session_compact_rewrite` probe and `claude plugin test .` again; the mod API
+  is early access.
+- **Gaps recorded**: the task list of a team or a resumed list; a restarted or resumed session (a new process) starts with no
+  record of the files it wrote or the handoffs it read before (`$.state` was not restored into a later process in the probe); files made by `Bash`; append-to-messages (observed to
+  work in `-p`, hub #10) is not in v1, it is the fallback if the TUI check shows the summarizer ignoring the
+  instructions; task subjects are the person's own words and reach the summarizer as one cleaned line, not redacted;
+  the engine skips a hook that throws (observed in the test kit), so the catch in this one is a choice, not a need.
+
+### Dispatch count (in-flight, #32)
+
+ACTIVITY's first row counts this session's subagents still running. Its source is the agents tracker file, the one
+the agents row reads (one read, both rows). A `running` entry started within 30 min (`DISPATCH_STALE_MS`, inclusive)
+counts; an older or undated one is shown as `N stale`, never hidden, because the tracker never prunes `running` (a
+missed SubagentStop leaves one forever). There is no fixed limit: the row shows the plain count. The optional
+threshold is the environment variable `STATUS_PANE_INFLIGHT_WARN` (`$.env.get`, read on every refresh while the
+agents row is on): a positive safe integer turns the warning on, and a count above it reads `N over T` in red bold.
+It is a display state only: no hook, no deny, no toast. Unset, empty, zero, negative, non-integer (`+3`, `2.5`, `1e3`)
+or past the safe integer range is no warning (`parseInflightWarn`); a refused read is no warning too; a count equal
+to the threshold is plain. Scope: this session's file, while the 429 limit is account-wide, so the number is a
+per-session lower bound. The group row (`○×N`) still counts stale entries, so on a dirty file the two can disagree;
+that is the agents row's own parity, left alone. Refresh rides the 30 s tick and `turn.complete`. A missing file
+reads `in-flight n/a（agents file missing）` and is not counted as an error: the tracker writes only on a SubagentStart
+or SubagentStop (read from `subagent-tracker.js`, inferred), so a session that has dispatched nothing has no file by
+design, as with the SYNC file (#29), and the agents row reads `idle` as it does on main. A file that is there but
+cannot be read (permissions, ownership) reads `in-flight n/a（agents file unreadable）` and the agents row reads n/a
+too, not idle; one that is read but is not a JSON object (cut off, empty, `[]`) reads the same on the in-flight row
+alone, the agents row staying `idle`. A fault counts one error: that unreadable read, a corrupt file, an existence
+check that is refused, an unwired hook (the agents row counts the failed read, the check and the hook, and the
+in-flight row does not add a second; the in-flight row alone counts a corrupt file). Tail: no in-flight segment.
+
 ## Dependencies
 
 The agents, edited, summary and compact data come from tracker hooks in the settings, the mcp data from a
 refresher script. Deleted later as cc-statusline leftovers, they would leave a row reading `idle`, `0` or
 the session id, so each refresh checks them and a missing one reads `n/a (<reason>)`, which counts toward
-the errors like any n/a (the SYNC card's missing and stale file are the exception, see its card).
+the errors like any n/a (the exceptions: the SYNC card's missing and stale file, and the in-flight row's missing
+tracker file; see their sections).
 
 | Dependency | Present when | Feeds | When missing |
 |---|---|---|---|
@@ -308,6 +519,8 @@ and cost agree: `tok` (the native steps cumulative in+out, the mod `context.toke
   no `session.end` hook, and a refresh that straddles it cannot take lines of the new session.
   Accepted (R20a): lines still pending when the session id changes, at most the edits since the last
   refresh (about 3 s after a turn), are dropped with the old id.
+- The keep-list's `keep` (the last compaction) and `kept` (the files this session wrote, the handoffs it read) live in `$.state` under the
+  session id they belong to, like the counters above; a process that starts later reads none of them (observed, #31).
 
 ## Display
 
@@ -464,8 +677,8 @@ and cost agree: `tok` (the native steps cumulative in+out, the mod `context.toke
   red or `△` yellow when it needs auth, over rows when they do not fit one), `memory` (`global · project ·
   3 rules`, over rows at the separators when too long). A failed collector takes rows of its own and says
   why in full. The errors, `N error(s)` in red (failed rows that are on, except a missing or a stale SYNC
-  file, and writes that fell back to a plain write), are the last row at the right edge. With the card off
-  (`sys` and `memory_mcp` both) the errors stand alone in a row under the cards.
+  file and a missing in-flight tracker file, and writes that fell back to a plain write), are the last row at
+  the right edge. With the card off (`sys` and `memory_mcp` both) the errors stand alone in a row under the cards.
 - **Toggles.** `summary` hides the summary in the header, `model` its model part, `cost` the `$` row of
   COST and the session length, `usage` CONTEXT and the `tokens` row, `quota` 5H and 7D, `dir` and
   `repo` GIT (both off), `agents` and `edited` their part of ACTIVITY (both off: no card), `sys` the CPU
@@ -477,7 +690,7 @@ and cost agree: `tok` (the native steps cumulative in+out, the mod `context.toke
   unreadable is not one of these.
 - A collector that throws or times out turns its card (or the part of it) into `n/a (<short reason>)`
   in its frame; the other cards draw normally. Failed rows that are on count in the errors (a missing or
-  a stale SYNC file excepted).
+  a stale SYNC file and a missing in-flight tracker file excepted).
 - The liveness repaints without a refresh: after each snapshot write a `$.clock.after` at 90 s and
   one at 300 s (each plus 1 s) call `$.ui.invalidate('ui.render')`, and the next write cancels
   them. A refresh that cannot write its snapshot writes `checkedAt` to `$.state`, which both render
@@ -730,6 +943,35 @@ Card     Box width round gray paddingX=1 column               (Section: Box widt
 | 46 | section 2 rules | every key required; label, kind, stamp, code, status shapes; consistency 1-3; `error.message` 1 to 200 code points and the control set (U+0000-001F, 007F-009F, 2028, 2029) with its neighbours accepted; unknown keys ignored; the first violation is the one named |
 | 47 | `schema_version` literal | `1.0`, `1e0`, `-0`, `0`, strings and bools are malformed, `2` is unsupported before any v1 rule; a decoy inside `data`, a duplicate key and an escaped key name are read as `JSON.parse` has them |
 | 48 | time | calendar, not `Date.parse` (leap and century years, month lengths, hour 24, year 0000 and 0001/9999); age equal to the TTL is fresh, a millisecond more is stale; 300 s ahead is age 0, 301 s is malformed; `data.final` only as boolean `true` and only for a kind with a final TTL; step 6 before step 7 |
+| 30-1 | fill is tokens / window | `{tokens 600000, window 1e6, percent 0}` gives 0.6; `percent` never decides, whichever way it disagrees |
+| 30-2 | unknown is not zero | tokens missing, 0, negative or NaN, window missing, 0, negative or Infinity: null, no advice, no suggest, no NaN in text |
+| 30-3 | threshold inclusive | 0.5999 no advice; 0.6 advice; 0.801 in the red tone (the gauge's boundaries) |
+| 30-4 | config parse | threshold: whole numbers 1..99, else 60; mode `1` suggest, `0` off, anything else observe; no throw |
+| 30-5 | once per crossing | fills 0.55, 0.60, 0.63, 0.70, 0.61, 0.55, 0.62 fire at 0.60 and 0.62 only; another session id starts over |
+| 30-6 | suggestion text | exactly the fixed `COMPACT_TEXT`: `/compact ` prefix, one line, at most 120 cells, no session data |
+| 30-7 | below the line | the quiet hint `達 60% 建議 /compact`, dim, one row at 36, 49 and 89 columns, no alert and no mode line; also with no usage yet; a taller CONTEXT card in every golden, pinned body and fixture that has one (the owner's words on #30) |
+| 30-8 | at the line | the alert with `60%` and `/compact` at 36, 49 and 89 columns, in place of the quiet hint and never beside it; under the used row; no new card |
+| 30-9 | mode line | observe, `on · shown`, `on · not shown`, `on · pending`, off; no line without a state |
+| 30-10 | fit | no overflow at 22 to 120 columns, 200K and 1M windows, with a long reason (22: the MIN_W clamp below it predates the card) |
+| 30-11 | engine: observe | default: no `prompt.suggest` call; `last.would` holds the text |
+| 30-12 | engine: suggest | one call with the fixed text; a repeat is silent; a compact then a new crossing sends again; `isShown` recorded |
+| 30-13 | engine: isShown false | recorded as false; the next measure tries again |
+| 30-14 | engine: refused suggest | the measure resolves; the reason is recorded |
+| 30-15 | engine: silent | a measure without `context` in `changed` writes no state and reads no env |
+| 30-16 | engine: bypass, master switch | env `0`: no call, mode off; rows file `enabled:false` or the `usage` row off: no state write, no call |
+| 30-17 | engine: burst | three measures at once: one call |
+| 30-18 | engine: fail-open | env read refused, then state write refused: both resolve, no call |
+| 30-19 | engine: other session | a state of another session is overwritten; its armed flag does not suppress (the other state is served by the fixture's `state.get`, not written beside it) |
+| 30-20 | the engine's answers | the 94 probe runs of `compact.observed.ts` (2.1.296) replayed through `effectiveWindow`: window and source equal the engine's `rawMaxTokens` and `autocompactSource` (env, settings, else the model's window); five rows are known gaps and pin what the plugin answers; a control that most rows shrink the window and that every source the engine named occurs |
+| 30-21 | the variable | unset, empty, spaces, a sign, exponent, thousands marks, a leading integer, `400k` floored, hex and negatives skipped, floor 100000, cap 1000000 |
+| 30-22 | the model's name | dated, `[1m]`, Vertex, Bedrock, upper case and spaces name one model; `claude-opus-5` is not `claude-opus-5-5` |
+| 30-23 | the settings' rules | in one file the entry beats the top-level value, whatever way its key is spelled; a higher top-level value replaces a lower entry; a higher entry beats a lower top-level value; another model's entry is none; `"auto"` ends the search; bounds, floats and strings; two spellings in one file; policy to user in order; junk sources and entries without a throw; an unnamed model takes no entry |
+| 30-24 | the answer | no window is null; never wider than the window; the variable before every source of settings, and a bad variable skipped; `autoCompactEnabled: false` puts the settings aside, the variable stays, the highest source that names it decides; nothing set is the model's window |
+| 30-25 | the card's base | 239,999 of a 400K window is under the line and 240,000 at it, at 36, 49 and 89 columns; the line's figure `(240.0K)` shows only for a smaller window (used reads 250.0K so the figure is the line's own); no override or a snapshot without the field reads as before |
+| 30-26 | the quiet hint | dim, one row (`達 60% 建議 /compact`), alert at the line and never both; with no usage yet; the figure in both forms; an n/a card carries none; the mode line stays with the alert; no overflow from 22 to 120 columns under the line; the threshold of the state (75 reads 75) |
+| 30-27 | engine: the snapshot's window | the settings name 400K; the variable first; nothing set; settings refused with and without the variable; a project's top-level value replaces the user's entry |
+| 30-28 | engine: the measure's window | 250K of 400K sends where 250K of 1M does not; 239,999 one token under, 240,000 at it; observe mode records at the same line; the variable moves the line (150,000 of 250,000); a measure window below the setting is the window (130K of 200K); settings refused falls back to 60% of the model's; the variable refused leaves the settings; another model's entry is not taken; ranked at the measure too |
+| 30-29 | mutations of 30-7 and 30-20 to 30-28 | 34 mutants, each turning a named test red. The window: the settings read before the variable, the model matched by prefix, the top-level value read before the entry (with a non-canonical key), `autoCompactEnabled` ignored, no clamp for the settings, no clamp for the variable, `"auto"` as no entry, no bounds, sources walked lowest first, no floor, `Number()` for the variable, dated names kept, the canonical spelling not winning, an unnamed model taking entries, the window not stored on the snapshot, the measure ignoring the window, the card on the model's window, the variable not read, sources in read order, no settings at the measure, no settings at the refresh, the figure never told, the figure always told, the figure being the window. The hint: none under the line, in a reading colour, beside the alert, naming the default threshold (quiet and alert), with the mode line, without the figure, on an n/a card, worded as reached, wrapped at 12 cells |
 | 49 | reader never throws | refused or throwing `exists`/read, a non-bytes answer, a path or clock that is not valid, empty/blank/BOM, trailing content, NaN, a non-object, 60k-deep nesting, 64 KiB exactly vs one byte more (bytes, not characters), every kind of broken UTF-8, `__proto__` keys; a name outside the grammar or an unregistered kind is not opened |
 | 50 | locations and names | the grammar both ways, `local` and `synced` paths with the TMPDIR / CLAUDE_CONFIG_DIR fallbacks, a name part that would not parse back gives null, the host of a synced name equals `producer.host` |
 | 51 | FIXTURE card at the three layouts | bodyColumns 36 / 49 / 89 (1, 2, 3 across): a card across the whole width, `count`, `age`, `observed`, on every surface; every manifest case is the contract text with no count, age or clock rows and no overflow; a long reason is read to its end; the age follows the draw clock; off by default and switched off by the rows file: no card and the file is never read; a refused read is corrupt and the rest draws; TMPDIR honoured; one error when it fails, none when healthy; the master switch collects nothing |
@@ -748,6 +990,45 @@ Card     Box width round gray paddingX=1 column               (Section: Box widt
 | 64 | SYNC card on by default, and its opt-out | `sync.test.ts`, the engine describe: with no rows file and the producer's file the card reads `-3 PULL` as the last card, the tail leads with `SYNC -3 PULL` and no error is counted; with no file it reads `n/a（缺檔）`, no tail segment and no error (row 66); `"sync": false` hides the card, the tail and the error and the file is never read; the reading of the rows key: no key and `1` are on, `false` and `0` are off |
 | 65 | SYNC card at every width | `sync.test.ts`, bodyColumns 22 to 122 (the three tiers and the seams between them), on the layout alone: four readings (behind 3 with both stamps, ahead 2 with stamps months old, diverged by four-digit counts, in sync and never pushed or fetched) and four n/a reasons (no file, the producer's timeout text, one unbroken word of 217 cells, wide characters only). At each width nothing in the pane is wider than its room, by the tree and by the rendered text; every card's frame is whole; the SYNC card is there and as wide as the pane (a missing card fails the sweep, it does not pass it); the headline and the six rows come in order; the n/a reason is read to its end. Mutation, on a scratch copy, one change at a time, the rest of the suite staying green: the n/a reason unwrapped, the n/a reason cut with an ellipsis, `last push` as one row with no fallback under its label, the card left out on the narrowest panes, the card one cell narrower than its room, the headline left out below 20 cells inside, the `observed` row left out below 18 cells inside: each turns the sweep red and nothing else |
 | 66 | SYNC n/a and the error count | `sync.test.ts`, the engine describe `which n/a counts as a SYSTEM error` (owner decision of 2026-10-12): the card shows every n/a and the tail leaves the SYNC segment out, but only a fault is the one SYSTEM error. Not counted: no file (`n/a（缺檔）`), a stale file (`n/a（過期 30m）`), and a stale file whose last collection failed (the hub's `failed` bytes read 20 minutes later: `n/a（過期 20m，最後一筆收集失敗：…）`; the same bytes read fresh count one). Counted, one each: a fresh `failed` file, a `2.0` count (reader verdict `malformed`), a branch name with a space (a data rule of `syncOf`; the reader says `ok`), a truncated file (`corrupt`), and a row that failed to collect (the read outlasts the 5 s guard: `n/a（timeout）`, held with `stallNext`). `"sync": false` still counts nothing, and `fixturecard.test.ts` pins that a missing and a stale fixture still count. Red before the change: the three not-counted tests; the other five are regression guards that the mutations pin. Mutation, on a scratch copy, one change at a time, the rest of the suite staying green: count every SYNC n/a again turns red exactly the three not-counted tests; count none, exactly the five counted ones; drop `stale` from the exclusion, exactly the two stale tests; drop `missing`, exactly the no-file test; treat a failed collection as by design, exactly the timeout test; also exclude `failed`, `malformed`, a data-rule violation or `corrupt`, exactly the test of that case; give the FIXTURE row the same exclusion, exactly its two error tests |
+| 67 | dispatch count | `dispatchOf`: a missing file is n/a（agents file missing）; running within 30 min counts and the boundary is inclusive; older or undated running entries are stale; other statuses count nowhere; an unreadable file is n/a（agents file unreadable）, through the engine too: a file that exists but whose read is refused reads unreadable, not missing, at the three widths, with the agents row n/a and one error; no fixed limit: the plain count, and `N over T` in red bold only past a threshold, where `parseInflightWarn` takes a positive safe integer and anything else (unset, empty, zero, negative, `+3`, `2.5`, `1e3`, untrimmed junk, out of range) is no warning; a count equal to the threshold is plain; the engine reads STATUS_PANE_INFLIGHT_WARN each refresh and a refused read is no warning; through the engine it follows the 30 s tick; a failed read counts one error and a missing file none (row 68); mutations, each turning a named test red: the missing file as 0, the unreadable file as 0, the refused read labelled missing or treated as absent or empty, the `>=` boundary, the `+` / float / trim / safe-integer checks, the ASCII parens, the threshold not passed to `dispatchOf` |
+| 68 | dispatch n/a and the error count | `dispatch.test.ts`, the describe `which tracker n/a counts as a SYSTEM error` (review round 1 of PR #8; the same class as the SYNC file of row 66): the in-flight row shows every n/a, but only a fault is the one SYSTEM error. Not counted: no file (the hook is wired, nothing has been dispatched): `in-flight n/a（agents file missing）` beside `agents idle`, no chip. Counted, one each: a file cut off mid-write and valid JSON that is not an object (`n/a（agents file unreadable）`, `agents idle`; the in-flight row alone counts it), a file whose read is refused (`n/a（agents file unreadable）` on both rows; the agents row counts it), an existence check that is refused (`n/a（EACCES…）` on both rows, once), the hook not wired (`n/a（subagent-tracker.js hook not configured）` on both rows, once and not twice). A healthy file reads `in-flight 3` and counts none. `dispatchByDesign` in `collect.ts` is the file being absent (no text read), not the reason text, as `syncByDesign` is the reader's verdict. Source levels: the displays and the counts are observed (the suite, and a probe of the same states through the engine at 36 and 89 columns on main c571633, on a875971 and on the fix); that the producer creates the file only on a SubagentStart or SubagentStop is inferred (read from `~/.claude/scripts/hooks/subagent-tracker.js` on WKY, 2026-10-13, not run live); that a missing file is by design and still shown as n/a（原因） is specified (the review of round 1, and the ticket's 「資料缺失顯示 n/a（原因）」). Against main, observed: no file, a cut-off, empty or non-object file and a refused read were `agents idle` with 0 errors (the in-flight row was not there); a refused existence check and an unwired hook were already 1 error. Red before the change: the missing test of row 67 (its `1 error` flipped to 0) and the missing row here; the other six rows are regression guards that the mutations pin. Mutation, on a scratch copy of the fixed tree, one change at a time, the rest of the suite staying green (control 1218 pass): count the missing file again (the exclusion removed) turns red exactly the missing test of row 67 and the missing row here; never count an in-flight failure, or let any good read of the agents row excuse it, exactly the corrupt-tracker test of row 67 and the two corrupt rows here; a refused read taken for no file, the three width tests of row 67, its agents-row test and the refused-read row here; a refused read taken for an empty file, exactly the agents-row test of row 67 and the refused-read row; an unwired hook not counted, the four tests of row 27 that count it, the corrupt-tracker test of row 67 (its second half unwires the hook) and the unwired row here; a refused existence check taken for no file, exactly its row here; the missing file read as 0, the unit test and the engine test of row 67, the missing row here and `with no tracker files they read idle` in `refresh.test.ts`. The first pass of the last two also timed out three layout sweeps at 5000 ms (load average 25 on the machine); they passed on the rerun and are not those mutants' doing |
+| 31-1 | config | `STATUS_PANE_KEEP`: `1` on, `0` off, anything else (unset, empty, `x`, `2`, `true`, ` 1 `, `01`) observe; the precompute policy is rewrite only for `rewrite`; a value that is not text is the default, no throw |
+| 31-2 | task file | `pending` and `in_progress` kept, the id as text (a number too); `completed` and `deleted` dropped quietly; an unknown or missing status, no subject, a subject of hidden characters only, an id that is not text or not a safe name, bad JSON, `[]`, `null`, `42`, `"str"` and a `__proto__` key are dropped with a reason that is a problem; the subject is cleaned on the way in |
+| 31-3 | one clean line | `\n`, `\r`, `\t`, U+2028, U+202E, U+0000, U+0085, U+007F, U+200B, U+FEFF, U+2066 each become one space, runs and ends collapse; the cap counts code points (an emoji is never cut); both edges of each of the 14 hidden ranges (listed in the test itself, not read from the code) fold into one space in a subject and refuse a recorded path, and the code point just outside each stays (the joiners U+200C and U+200D among them; a blank beside a range folds in a subject and is accepted in a path); `tasksOf`: in progress before pending, by number (9 before 10), a name that is not a number last, 15 at most with the rest counted, the input untouched |
+| 31-4 | recorded paths | Write, Edit and NotebookEdit: absolute, newest first, once each (a re-edit moves to the front), 20 at most; a relative path, an empty one, one with a newline, U+202E or U+0000, 401 characters (400 is kept), inside `node_modules` or `.git`, not text, and every other tool record nothing (`.gitignore`, `node_modules_old`, `my.git`, `.github` are not those directories); another session id starts over and leaves the old record as it was |
+| 31-5 | handoffs | `handoff-<name>.md` only (`handoff-notes.txt`, `my-handoff-x.md`, `handoff-.md`, `handoff.md`, `handoff-x.md.bak`, `handoff/foo.md` are not); written: a handoff and a file; read: a handoff only; a Read of anything else records nothing; 5 at most, newest first, once each; `callPath`: `file_path` for Write, Edit and Read, `notebook_path` for NotebookEdit, nothing for another tool |
+| 31-6 | the instructions | `withKeep`: the person's text first and byte for byte, a blank line, the block; none, blank or not text is the block alone with no leading newline and no `undefined`; instructions that already carry the first line come back as they are; at most the text, the block and two characters |
+| 31-7 | the block | `buildKeep`: tasks, handoffs, files under their titles; nothing is null (never a header alone); a section with nothing has no title; a handoff that was also written is named once; tasks the caller could not fit are counted on the last line; over 1500 units whole items go from the end (files, then handoffs, then tasks), the last line counts them, no line is cut; exactly 1500 fits and one more does not; the sweep of 1 to 40 tasks keeps the most that fit |
+| 31-8 | the decision | `decideCompact`: off, a subagent, a block already there and a trigger of the future pass (`off`, `subagent`, `marked`, `trigger`); on: manual, auto and plugin rewrite, nothing to keep is `empty`; a precompute is a skip with a one-line reason under the skip policy and a rewrite under `rewrite`; observe passes and says `would`; all 3 x 2 x 5 x 2 x 2 x 2 combinations: a rewrite needs mode on, the main loop, no block yet and something to keep, a skip is only a precompute under mode on and policy skip, `would` is only for observe |
+| 31-9 | engine: manual | the person's text, a blank line, the block; the messages and the trigger as they came; the engine's answer back as it is |
+| 31-10 | engine: auto | instructions absent, `undefined` or `null`: the block alone, no `undefined`, no `null`, no leading newline |
+| 31-11 | engine: #30's text | the text #30 pre-fills (`COMPACT_TEXT` without `/compact `) survives in front of the block; a plugin's own compaction is told like a manual one |
+| 31-12 | engine: precompute skip | mode on, default policy: `{ skip }` with a reason, no file read, the listing never tried (a refused one would have been told as a problem), the engine below never reached, `seen.precompute` 1 |
+| 31-13 | engine: precompute rewrite | policy `rewrite`: the block goes in |
+| 31-14 | engine: precompute observe | reached with the instructions as they came; the state says `would: skip` |
+| 31-15 | engine: precompute bypass | `STATUS_PANE_KEEP=0`: reached untouched, the compaction reads no file and writes no `keep` |
+| 31-16 | engine: observe | the default: the engine below gets the instructions as they came; the state holds the block that would be sent, its counts and size |
+| 31-17 | engine: bypass | `STATUS_PANE_KEEP=0`: the compaction reads no file and writes no `keep`, instructions as they came (the capture still records: 31-37) |
+| 31-18 | engine: rows file | `enabled:false`: the compaction reads no file and writes no `keep`, as it came (the capture still records: 31-37); no snapshot yet is not that switch |
+| 31-19 | engine: subagent | `agentId` set: as it came, nothing read, nothing written (specified-only: the end-to-end check covers the main loop) |
+| 31-20 | engine: empty | mode on with nothing to keep: as it came (also for auto), the state says `empty`, no header-only text |
+| 31-21 | engine: twice | instructions that carry the block's first line are not given it again; the same event passing twice, and the line inside other text; the calls that find it read no file and write no `keep` |
+| 31-22 | engine: where the tasks are | `CLAUDE_CONFIG_DIR` over `HOME`; `CLAUDE_CODE_TASK_LIST_ID` over the session id, `my list/1` read as `my-list-1`; the full id with its dashes, not the 24 character one (a decoy list under each wrong name) |
+| 31-23 | engine: the directory | `.lock`, `.highwatermark`, `.hidden.json`, `notes.txt`, `x.json.bak` ignored and finished tasks left out; 250 files are 200 reads, the newest, and the cut is told; an unreadable file and one that is not JSON are problems by name and the rest is kept; a missing directory is no task and no problem and the state names where it looked; one that cannot be listed is a problem and the other sources still go in; a hostile subject reaches the summarizer as one clean line |
+| 31-24 | engine: fail-open | the switch unreadable, the state unwritable, the state unreadable, the clock unreadable: the engine below gets the event as it came, once, and the call resolves |
+| 31-25 | engine: deadline | a file read, or the rows-file state read, that never answers: after 4000 ms of mock time the call resolves as it came (nothing sooner), and releasing the read afterwards changes nothing and writes no state |
+| 31-26 | engine: one call | off, observe, on, on with nothing, a subagent, a block already there, a precompute observed and rewritten reach the engine below once, a skipped precompute never; its answer comes back unchanged; its failure is passed on and not tried again |
+| 31-27 | engine: the record | Write, Edit and NotebookEdit that went through, a subagent's too, are recorded under the session id; a denied, failed or throwing call is not; a Read of a handoff is a handoff, any other Read writes nothing; a relative path, `node_modules` and `Bash` write nothing |
+| 31-28 | engine: the record at a compaction | it outlives the compaction and grows (A, B, then C: C, B, A); another session id starts over; a file that is gone is left out and counted, one whose check is refused stays; the newest 10 are listed; handoffs come before files, once, and are checked like them |
+| 31-29 | the card | the `keep` row after the hint at 36, 49 and 89 columns, whole (`keep observe · manual · 3 tasks 4 files 1 handoff`, `keep on · auto · injected 412 chars`, `keep on · precompute skipped`), its word dim and its value not; no state, the mode off or an n/a card: no row; no overflow from 22 to 120 columns; through the engine the pane shows it after a compaction and not before, and not for another session's state |
+| 31-30 | `/keeplist` | registered after the others with `immediate: true`; before any compaction it says so and names the switches; after one it prints the switches, the sightings, the decision, each source and the block; another session's state is none; a refused state read is `keeplist n/a (reason)`; no file read, no listing, no `usage()` |
+| 31-31 | guard: the old suites | `claude plugin test .` on `t30-context-card` at 00e6870 (it holds main 14487a7 with the SYNC card): 1045 pass, 0 fail, 13 files. Here 1218 pass, 0 fail, 15 files (1045 + 129 new rows in `keeplist.test.ts`: 54 pure, 63 engine, 12 card, + 44 in `dispatch.test.ts`, #32); every old one is unchanged and green except the two lists of registered commands (`pane.test.ts` `session.start`, `progress.test.ts` `/progress is registered`), which now end with `keeplist`. `claude plugin validate .` passes |
+| 31-32 | guard: secrets | no added line looks like a credential, and no fixture builds one |
+| 31-33 | which task files | `pickTaskFiles`: only `<id>.json`; the newest ids first (10 before 9), a name that is not a number last; 200 at most with the rest counted; the listing untouched |
+| 31-34 | the task directory | `taskDirOf`: `CLAUDE_CONFIG_DIR` over `HOME`, trailing slashes dropped, the full session id with its dashes, `CLAUDE_CODE_TASK_LIST_ID` over it with every character outside `[A-Za-z0-9_-]` a dash (`../../etc` is `------etc`, an emoji is two), empty values fall through, no base or no id is a reason |
+| 31-35 | the state | `nextKeepState`: counted under its trigger, another session starts over; `keepLabel`: the three card values, singular and plural, a count of problems, the mode alone with no decision; `keepReport`: switches, sightings, the decision, counts, each source, every problem, the block; no state is `no compaction seen`; through the engine the sightings count by trigger and start over for another session |
+| 31-36 | mutations | 54 changes made one at a time to a copy of the plugin, each turning at least one named row red and none surviving. The plan's ten: the block check dropped (31-6 and 31-21), a precompute passed through under mode on (31-8 and 31-12), the person's text dropped (31-6, 31-9, 31-11), `undefined` or `null` through a template string (31-6 and 31-10), observe also rewriting (31-16, that row alone), the deadline doing nothing when it falls due (31-25, both stalled-call rows), `next` called twice (31-26, and every row that counts the calls below), the 24 character id naming the task list (31-22, and every row that seeds tasks), `agentId` ignored (31-8 and 31-19) and a Read of every file recorded (31-5 and 31-27). The rest: the observe check inverted in the decision, one newline in place of a blank line, the handoff section under the files title, `>=` and 1501 at the budget, hidden characters kept, a finished task as a problem, pending before in progress, a path listed twice, `HOME` before `CLAUDE_CONFIG_DIR`, a refused existence check dropping the path, a late answer writing the state, the rows file ignored, `0` not a bypass, the sources read before a skip, denied and failed calls recorded, a subagent's write dropped, the count not starting over for another session, the card drawing another session's state or the row with the mode off, 20 files listed, handoffs unchecked, a missing directory as a problem, the oldest 200 task files read, a rejection not turned into a pass (the call never answers), a hook that never rewrites, every tool call writing the record, null instructions unguarded, a blank person's text kept, a 3 s and a 5 s deadline, 21 files, 6 handoffs, 16 tasks, 101 code points, a 401 character path, 201 task files, a 65,535 and a 65,537 byte limit, no size guard, tasks neither ordered nor capped, a relative path recorded, `node_modules` and `.git` recorded, and `handoff-.md` a handoff. The first pass left the 101 code point subject alive (the pure row cut with its own number, not the parser's); `the subject is cut to 100 code points on the way in` closes it. The old layout row `never borderless at any width from 20 to 122` (1.3 to 2.3 s alone) timed out in several mutants run three suites at a time; it is not those mutants' doing and passes alone. A later review found nine more alive: `hasMark: false` in `keepWork` (the instructions come back the same through `withKeep`, so only the file reads and the `keep` write told it), and the removal of each of the U+00AD, U+061C, U+180E, U+200E-F, U+2060-64, U+FFF9-B, U+E0100-E01EF and U+FEFF ranges from the hidden table (no row used those characters). 31-21 now counts the reads and `keep` writes of the calls that carry the block, and the edge row of 31-3 closes the ranges. Each of the nine turns its own row red and no other (`hasMark: false` 31-21, the eight ranges the edge row of 31-3). A task subject cannot tell U+FEFF (`\s` folds the BOM): only the path check can. Moving an edge by one code point (U+200C, U+200D, U+2065 and U+E0080 hidden; U+001F, U+007F, U+206F and U+FFF9 not) turns the edge row red too. Stopping the capture under `STATUS_PANE_KEEP=0`, or under the rows file switched off, turns its own row of 31-37 red and not the other |
+| 31-37 | engine: the capture under the switches | `STATUS_PANE_KEEP=0` and the rows file `enabled:false`, one row each: a Write and a Read of a handoff are still recorded under the session, while a compaction is left as it came and writes no `keep` |
 | 28-1 | merge, hub EXPECTED | `waiting.test.ts`: the hub `merged` set and winners at the reference now; closed wins, the larger host wins a tie, due is strictly over 604800 s, 0002 takes the newer text |
 | 28-2 | hub copies | `waiting.test.ts`: each embedded copy matches its pinned sha256 (commit 7b88598); a one-byte edit changes the hash |
 | 28-3 | item rules | `waiting.test.ts`: one case per SCHEMA 9 violation, each n/a with its reason; 200 emoji accepted; unknown keys ignored |
@@ -774,6 +1055,56 @@ Card     Box width round gray paddingX=1 column               (Section: Box widt
   5. `/cost` again: unchanged apart from that turn's own cost (no model call for `/progress`). Watch the pane for flicker at the 2 s repaint; this also measures the extra `$` calls and state writes per tool call once.
   6. BG (#16, branch `t16-inflight-row`): prompt `run Bash in the background: sleep 120`, wait for the turn to end, then `/progress`. PASS: `BG   shell <n>s` with `snapshot` under it and the `PERM n/a（...）` line; when the shell ends the notification row hides it. Also try a `CronCreate` and, if it can be arranged, a workflow or monitor: those were never stimulated, record what `BG` shows on #16.
   7. `git -C ~/.claude/plugins/status-pane checkout main`.
+- Manual TUI check for #30 (owner only: the grey text shows in a live TUI, and `-p` has no input box; #9 item (b)): start a TUI session
+  with `STATUS_PANE_CTX_SUGGEST=1 STATUS_PANE_CTX_AT=1`, run one short turn, leave the box empty and idle.
+  PASS: after the turn the box shows the grey `/compact focus on ...`, Tab takes it into the box, and the card's
+  `suggest` line reads `on · shown`. `on · not shown` or no grey text: record the result on #30 and #9/#31; the
+  feature stays hint-text-only and the default stays observe. With `modelSettings.claude-opus-5-5.autoCompactWindow`
+  = 400000 the CONTEXT card also reads `達 60% (240.0K) 建議 /compact` under the line and `△ 已達 60% (240.0K) · 建議
+  /compact` from 240K tokens on, while its title percentage stays a share of the model's 1.0M.
+- Probe of the #30 line through the real engine (2.1.296; a scratch config dir, a loopback stub API that answers with
+  chosen usage figures, this branch loaded beside a recorder of `prompt.suggest`; not part of the suite). With
+  `STATUS_PANE_CTX_SUGGEST=1` the suggestion goes out of `session.measure` exactly at the line and not a token before:
+  a per-model 400000 sends at 240000 and not at 239999 (and sends at 250000, where no setting does not); the variable
+  250000 sends at 150000 and not at 149999; a project's top-level 300000 over the user's per-model 400000 sends at 180000
+  and not at 179999; no setting sends at 650000 and not at 599999. Every call carried `origin = { kind: "plugin",
+  name: "status-pane" }` and was answered `isShown: false`, as headless has no box.
+- Manual TUI check for #31 (owner only: `-p` has no live summarizer and no TUI, and what the summarizer does with the
+  instructions is the open question; the flip to `on` is the owner's, per machine):
+  1. TUI-1, `STATUS_PANE_KEEP` unset: create two tasks, edit a file, run `/compact`. PASS: the CONTEXT card's `keep` row
+     reads `observe · manual · 2 tasks 1 file 0 handoffs`, `/keeplist` prints the block that would have been sent and the
+     conversation after the compaction is what a plain `/compact` leaves.
+  2. TUI-2, `STATUS_PANE_KEEP=1` in a new session: the same setup, `/compact`, then ask "which tasks are open and where
+     did you write files?". PASS: the answer names both; compare with `STATUS_PANE_KEEP=0`. FAIL (the summarizer ignores
+     the instructions): record it on #31 and open the append-to-messages follow-up (observed to work in `-p`, hub #10);
+     the default stays observe.
+  3. TUI-3: leave a long session in observe and read `seen.precompute` in `/keeplist`. 0 after real auto-compactions means
+     a precompute is never dispatched there and the skip default costs nothing; more than 0 says how often, and the
+     latency of the compaction that follows is what the skip costs.
+  The owner flips `STATUS_PANE_KEEP=1` (new sessions) after TUI-1 and TUI-2 pass and a few real compactions in observe
+  showed a sensible would-be text with no problems; `STATUS_PANE_KEEP_PRECOMPUTE=rewrite` only if TUI-3 shows a precompute
+  and the skip costs too much.
+- Probe of the #31 hook through the real engine (E2E-1; 2.1.296; the hub's loopback summarizer stub and its helpers, a
+  scratch config dir and home, this branch loaded with `--plugin-dir`, `CLAUDE_CODE_TASK_LIST_ID=e2e-list` over a list
+  of one pending and one completed task; not part of the suite; the hashes of the real settings files before and after
+  are equal). The evidence is the text of the summarizer request the stub received:
+
+  | run | summarizer requests | with the block | with the person's text |
+  |---|---|---|---|
+  | `STATUS_PANE_KEEP=1`, `say hi` then `/compact E2E-CMD-TEXT-7712` | 1 | 1 (the pending task, not the finished one) | 1, ahead of the block |
+  | `STATUS_PANE_KEEP=1`, an auto loop of 4 tool turns | 3 | 3 | none to carry |
+  | `STATUS_PANE_KEEP=0`, the manual run | 1 | 0 | 1 |
+  | unset (observe), the manual run | 1 | 0 | 1 |
+  | unset (observe), the auto loop | 3 | 0 | none to carry |
+  | `STATUS_PANE_KEEP=1`, no task directory | 1 | 0 | 1 |
+
+  In one process (stream-json input) `/compact E2E-CMD-TEXT-7712` then `/keeplist`: observe printed `manual → pass
+  (observe, would rewrite)`, `1 task · 0 files · 0 handoffs · 0 cut · 0 gone · 106 chars`, the directory it read and the
+  block; `=1` printed `manual → rewrite (keep)` and the summarizer request carried the block. The capture: a stub turn
+  that wrote a file with `Write`, one that `Read` a `handoff-e2e.md`, then an auto compaction under `STATUS_PANE_KEEP=1`:
+  both of its summarizer requests carry `Handoff files to re-read: - <dir>/notes/handoff-e2e.md` and `Files written or
+  edited (newest first): - <dir>/out/result.txt`; unset, neither. A precompute cannot be driven in `-p`; the hook
+  answers it in the engine rows only (31-12 to 31-15).
 - Live probe (main session): loaded through `CLAUDE_CODE_PLUGIN_DIRS`, with the real
   `statusline.js` beside it, the context %, 5h %, 7d % and session cost agree (tokens, duration
   and lines drift while both write the cum file: see above); pane and tail draw at 200 columns,

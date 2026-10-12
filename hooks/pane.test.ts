@@ -86,7 +86,7 @@ describe('session.start', () => {
 
     await $.session.start(START)
 
-    expect(world.registered).toEqual(['status-pane', 'progress'])
+    expect(world.registered).toEqual(['status-pane', 'progress', 'keeplist'])
     expect(world.opened).toEqual([{ id: 'status-pane', title: 'Status' }])
     expect(world.armed).toEqual([30_000])
   })

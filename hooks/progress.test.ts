@@ -206,7 +206,7 @@ describe('through the engine: tool.call bookkeeping, the pane and /progress', ()
 
   test('/progress is registered next to /status-pane, with immediate: true', async ($, on) => {
     const { world } = await boot($, on)
-    expect(world.registered).toEqual(['status-pane', 'progress'])
+    expect(world.registered).toEqual(['status-pane', 'progress', 'keeplist'])
     expect(world.commandSpecs.find(s => s.name === 'progress')).toMatchObject({ name: 'progress', immediate: true })
     expect(world.commandSpecs.find(s => s.name === 'status-pane')).not.toHaveProperty('immediate')
   })

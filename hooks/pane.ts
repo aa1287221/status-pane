@@ -24,10 +24,13 @@ import {
   staleness,
 } from './model'
 import type { Inflight, Progress, Tone } from './model'
+import { DEFAULT_AT, adviceOf, fillOf, modeLabel } from './compact'
+import { keepLabel } from './keeplist'
+import type { CompactState, KeepState } from './state'
 import { ageText } from './sidefile'
 import { waitingHead, waitingView } from './waiting'
 import { SYNC_FETCH_OLD_SEC, syncHead } from './sync'
-import type { AgentGroup, InflightState, NowState, Res, Snap } from './state'
+import type { AgentGroup, Dispatch, InflightState, NowState, Res, Snap } from './state'
 
 export type Seg = { text: string; color?: string; dim?: boolean; bold?: boolean }
 export type Line = Seg[]
@@ -42,6 +45,10 @@ export type PaneView = {
   cpuHist?: readonly number[]
   /** What the PROGRESS card is drawn from; without it the card is left out. */
   progress?: { tools: Res<NowState | null>; sid: Res<string>; inflight?: Res<InflightState | null> }
+  /** The /compact state the CONTEXT hint's mode line is drawn from; without it the line is left out. */
+  compact?: CompactState | null
+  /** The keep-list state the CONTEXT card's `keep` row is drawn from; without it, or with the mode off, the row is left out. */
+  keep?: KeepState | null
 }
 
 export type CardId = 'header' | 'context' | '5h' | '7d' | 'cost' | 'git' | 'activity' | 'waiting' | 'system' | 'progress' | 'sync' | 'fixture' | 'status'
@@ -359,7 +366,28 @@ const kvRows = (label: string, rows: Line[]): CardRow[] =>
 /** A cell of `width` cells with `text` against its right edge. */
 const cell = (text: string, width: number): string => ' '.repeat(Math.max(0, width - dw(text))) + text
 
-const contextCard = (snap: Snap, width: number, inner: number): Card => {
+/** The threshold hint under the CONTEXT rows: quiet under the line, the toned alert and the mode line at it. `base` is the window the line is taken of. */
+const compactRows = (fill: number | null, compact: CompactState | null, inner: number, base: number, max: number): CardRow[] => {
+  const atPct = compact?.atPct ?? DEFAULT_AT
+  const advice = adviceOf(fill, { atPct })
+  // the figure is told only when the line is taken of a smaller window than the one `used` is told against
+  const figure = base < max ? ` (${fmtTok(Math.round((atPct * base) / 100))})` : ''
+  if (advice === null) return wrapWords(`達 ${atPct}%${figure} 建議 /compact`, inner).map((t): CardRow => ({ kind: 'text', line: [dim(t)] }))
+  const tone = PALETTE[pctColor(advice.pct)]
+  const rows: CardRow[] = wrapWords(`△ 已達 ${atPct}%${figure} · 建議 /compact`, inner).map((t): CardRow => ({ kind: 'text', line: [seg(t, { color: tone })] }))
+  if (compact) rows.push(...kv('suggest', [plain(modeLabel(compact))], inner))
+  return rows
+}
+
+/** The `keep` row of the CONTEXT card: word and value on one row when they fit, else the word, then the value wrapped under it. Nothing without a state or with the mode off. */
+const keepRows = (keep: KeepState | null, inner: number): CardRow[] => {
+  if (!keep || keep.mode === 'off') return []
+  const text = keepLabel(keep)
+  if (dw('keep') + GAP + dw(text) <= inner) return kv('keep', [plain(text)], inner)
+  return [{ kind: 'split', parts: [[dim('keep')]] }, ...wrapWords(text, inner).map((t): CardRow => ({ kind: 'text', line: [plain(t)] }))]
+}
+
+const contextCard = (snap: Snap, width: number, inner: number, compact: CompactState | null, keep: KeepState | null): Card => {
   const r = snap.context
   if (!r.ok) return { id: 'context', width, rows: [titleRow('CONTEXT', null, inner), ...naRows(`n/a (${r.why})`, inner)] }
   const { used, max, compacts } = r.v
@@ -376,6 +404,9 @@ const contextCard = (snap: Snap, width: number, inner: number): Card => {
     if (widthOf(usedPair) + 3 + widthOf(compactPair) <= inner) rows.push({ kind: 'split', parts: [usedPair, compactPair] })
     else rows.push(...kv('used', [plain(figure)], inner), ...kv('compact', [plain(String(compacts.v))], inner))
   }
+  const base = r.v.autoCompact?.window ?? max
+  rows.push(...compactRows(fillOf({ tokens: used, window: base }), compact, inner, base, max))
+  rows.push(...keepRows(keep, inner))
   return { id: 'context', width, rows }
 }
 
@@ -762,11 +793,20 @@ const editedRows = (r: Snap['edited'], inner: number): CardRow[] => {
   return kvRows(EDITED, capped)
 }
 
+/** The in-flight row: the running count; past the warning threshold, when one is set, `N over T` in red and bold. Stale entries trail dim. */
+export const dispatchRows = (r: Res<Dispatch>, inner: number): CardRow[] => {
+  if (!r.ok) return naRows(`in-flight n/a（${r.why}）`, inner)
+  const { running, stale, warn } = r.v
+  const head = warn !== null && running > warn ? seg(`${running} over ${warn}`, { color: PALETTE.red, bold: true }) : seg(`${running}`, {})
+  return kv('in-flight', stale > 0 ? [head, dim(` · ${stale} stale`)] : [head], inner)
+}
+
 const activityCard = (snap: Snap, width: number, inner: number, c: Ctx): Card => {
   const on = snap.toggles.rows
   const rows: CardRow[] = [titleRow('ACTIVITY', null, inner)]
   // narrow: a row for each agent and each file; wider: the groups and the files flowing over a few rows
   const narrow = c.tier === 'narrow'
+  if (on.agents && snap.dispatch) rows.push(...dispatchRows(snap.dispatch, inner))
   if (on.agents) rows.push(...(narrow ? agentsRowsNarrow : agentsRows)(snap.agents, c.nowMs, inner))
   if (on.edited) rows.push(...(narrow ? editedRowsNarrow(snap.edited, inner) : editedRows(snap.edited, inner)))
   return { id: 'activity', width, rows }
@@ -1001,7 +1041,7 @@ export const paneLayout = (snap: Snap | null, view: PaneView): Layout => {
           : [['progress'], ['context', '5h', '7d'], ['cost', 'git', 'activity'], ['waiting'], ['system'], ['sync'], ['fixture']]
     const build = (id: BandId, width: number): Card => {
       const inner = innerOf(width)
-      if (id === 'context') return contextCard(snap, width, inner)
+      if (id === 'context') return contextCard(snap, width, inner, view.compact ?? null, view.keep ?? null)
       if (id === '5h' || id === '7d') return quotaCard(snap, id, width, inner, c)
       if (id === 'cost') return costCard(snap, width, inner)
       if (id === 'git') return gitCard(snap, width, inner)

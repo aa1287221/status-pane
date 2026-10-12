@@ -33,6 +33,9 @@ import {
   step,
   why,
 } from './model'
+import { effectiveWindow } from './compact'
+import type { EffectiveWindow } from './compact'
+import { dispatchOf, parseInflightWarn } from './dispatch'
 import { fixtureOf, naReason, readSideKind } from './sidefile'
 import { collectWaiting } from './waiting'
 import { syncOf } from './sync'
@@ -51,6 +54,9 @@ export type Io = {
   tmpdir: () => Promise<string | undefined>
   configDir: () => Promise<string | undefined>
   effortEnv: () => Promise<string | undefined>
+  /** The variable the engine reads before the settings for the window it compacts at. */
+  compactWindowEnv: () => Promise<string | undefined>
+  inflightWarn: () => Promise<string | undefined>
   settings: (source?: SettingsSource) => Promise<Settings>
   exists: (path: string) => Promise<boolean>
   read: (path: string) => Promise<string>
@@ -147,6 +153,9 @@ const tryRead = async (io: Io, path: string): Promise<string | null> => {
 /** Optional file: checked first, since the host logs every failed read as an error. */
 const readOpt = async (io: Io, path: string): Promise<string | null> =>
   (await io.exists(path)) ? tryRead(io, path) : null
+
+/** The reason both tracker rows give when the file exists and the read fails. */
+const UNREADABLE_AGENTS = 'agents file unreadable'
 
 const readMany = async (io: Io, paths: string[]): Promise<(string | null)[]> => {
   const out: (string | null)[] = []
@@ -381,6 +390,21 @@ const readToggles = async (io: Io, b: Base, prev: Toggles | null): Promise<Toggl
 /** The merge takes `hooks` whole from the last source that has it, so each source is read as well. */
 const SETTINGS_SOURCES: SettingsSource[] = ['user', 'project', 'local', 'flag', 'policy']
 
+/** Each source's settings, lowest precedence first; null when one cannot be read, since then nothing of them is known. */
+export const readSources = async (io: Io): Promise<unknown[] | null> => {
+  try {
+    return await Promise.all(SETTINGS_SOURCES.map(source => io.settings(source)))
+  } catch {
+    return null
+  }
+}
+
+/** The window the /compact line is taken of; the model's own when nothing says otherwise. Never throws. */
+export const compactWindowOf = async (io: Io, window: number | undefined, ascending: readonly unknown[] | null): Promise<EffectiveWindow | null> => {
+  const [model, env] = await Promise.all([io.model().catch(() => undefined), io.compactWindowEnv().catch(() => undefined)])
+  return effectiveWindow({ window, model, env, sources: ascending === null ? [] : [...ascending].reverse() })
+}
+
 const REFRESHER = 'mcp-status-refresh.js'
 const refresherPath = (home: string): string => `${home}/.claude/hooks/${REFRESHER}`
 
@@ -466,15 +490,20 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
     return guard(io, fn, ms)
   }
 
-  const [summary, dir, git, model, agents, compacts, cumRes, quota, cpuRes, ramRes, memory, mcp, edited, side, waiting, syncSide] =
+  // read only with the agents row on; a refused read is no threshold, so the count is shown plain
+  const warn = on.agents ? parseInflightWarn(await io.inflightWarn().catch(() => undefined)) : null
+  const [summary, dir, git, model, agentsRes, compacts, cumRes, quota, cpuRes, ramRes, memory, mcp, edited, side, autoCompactRes, waiting, syncSide] =
     await Promise.all([
       row(on.summary, [base, summaryWired], () => collectSummary(io, b!)),
       row(on.dir || on.repo, [base], async () => shortDir(b!.cwd, b!.home)),
       row(on.dir || on.repo, [base], () => collectGit(io, b!), GIT_ROW_MS),
       row(on.model, [base], () => collectModel(io, b!, input, settingsByRank)),
-      row(on.agents, [base, wired('agents')], async () =>
-        groupAgents(parseJson(await readOpt(io, `${b!.tmp}/claude-agents-${b!.sid}.json`))),
-      ),
+      row(on.agents, [base, wired('agents')], async () => {
+        const file = `${b!.tmp}/claude-agents-${b!.sid}.json`
+        // absent is a fresh session; a file that is there but cannot be read is another cause, and says so
+        const text = (await io.exists(file)) ? await io.read(file).catch(() => Promise.reject(new Error(UNREADABLE_AGENTS))) : null
+        return { text, groups: groupAgents(parseJson(text)) }
+      }),
       row(on.usage, [base, wired('compact')], () => collectCompacts(io, b!)),
       row(true, [base], () => collectCum(io, b!, u, input)),
       row(true, [base, usage], () => collectQuota(io, b!, u!, input)),
@@ -489,6 +518,8 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
       ),
       row(on.edited, [base, wired('edited')], () => collectEdited(io, b!)),
       row(on.fixture, [base], () => readSideKind(io, 'fixture', { tmpdir: b!.tmp }, {}, input.now)),
+      // the settings were read above: every source after the merge, lowest first
+      row(on.usage, [base, usage], () => compactWindowOf(io, u!.context.window, settingsRes?.ok ? settingsRes.v.slice(1) : null)),
       row(on.waiting, [base], async () => collectWaiting(io, { home: b!.home, configDir: await io.configDir() }, input.now)),
       row(on.sync, [base], () => readSideKind(io, 'sync-status', { tmpdir: b!.tmp }, {}, input.now)),
     ])
@@ -507,6 +538,7 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
           used: usage.v.context.tokens ?? 0,
           max: usage.v.context.window,
           compacts,
+          ...(autoCompactRes.ok && autoCompactRes.v !== null ? { autoCompact: autoCompactRes.v } : {}),
         },
       }
   const snap: Snap = {
@@ -519,7 +551,7 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
     lines: fromCum(c => ({ add: c.cum.add.total, rm: c.cum.rm.total })),
     model,
     cost: fromCumAndUsage(c => ({ all: c.all.cost, session: c.cum.cost.total, durMin: Math.round(c.cum.dur.total / 60_000) })),
-    agents,
+    agents: agentsRes.ok ? { ok: true, v: agentsRes.v.groups } : agentsRes,
     context,
     tokens: fromCumAndUsage(c => ({ all: c.all.tok, session: c.cum.tok.total })),
     quota: quota.ok ? { ok: true, v: { five: quota.v.five, seven: quota.v.seven } } : { ok: false, why: quota.why },
@@ -532,11 +564,16 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
   }
   // the reader's own text is the reason (never cut to a short one); absent when the row is off
   if (on.fixture) snap.fixture = side.ok ? fixtureOf(side.v) : { ok: false, why: naReason(side.why) }
+  // one read of the tracker feeds both rows; a failure reads the same reason in both
+  if (on.agents) snap.dispatch = agentsRes.ok ? dispatchOf(agentsRes.v.text, input.now, warn) : agentsRes
   if (on.waiting) snap.waiting = waiting.ok ? { ok: true, v: waiting.v } : { ok: false, why: naReason(waiting.why) }
   if (on.sync) snap.sync = syncSide.ok ? syncOf(syncSide.v, input.now / 1000) : { ok: false, why: naReason(syncSide.why) }
   // a SYNC n/a by design is shown but not counted: no file (no producer here yet), or an aged one (between hook runs);
   // a row that failed to collect is a fault
   const syncByDesign = syncSide.ok && (syncSide.v.verdict === 'missing' || syncSide.v.verdict === 'stale')
+  // no tracker file is by design too (the first dispatch writes it): the in-flight row shows n/a but is not counted;
+  // an unreadable or corrupt file is a fault
+  const dispatchByDesign = agentsRes.ok && agentsRes.v.text === null
   // a failure behind a row that is switched off is nothing to report; git counts when its status failed
   const shown: [Res<unknown>, boolean][] = [
     [snap.summary, on.summary],
@@ -546,6 +583,8 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
     [snap.model, on.model],
     [snap.cost, on.cost],
     [snap.agents, on.agents],
+    // a failed tracker read is one cause: the agents row already counts it
+    [snap.agents.ok && snap.dispatch ? snap.dispatch : OK, on.agents && !dispatchByDesign],
     [snap.context, on.usage],
     [snap.context.ok ? snap.context.v.compacts : OK, on.usage],
     [snap.tokens, on.usage],
