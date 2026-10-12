@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { HEADER_89_DETAIL, HEADER_89_MODEL, WORLD_89, boot, cardOf, headerOf, paneText, paneView, pair, right, summarize, trackerCommand, trackerHooks, without } from './fixture'
+import { HEADER_89_DETAIL, HEADER_89_MODEL, WORLD_89, boot, cardOf, headerOf, paneText, paneView, pair, pinSyncOff, right, summarize, trackerCommand, trackerHooks, without } from './fixture'
 import type { World } from './fixture'
 import type { PaneParts } from './tree'
 
@@ -253,7 +253,7 @@ describe('dependencies: the merge of the settings can hide a hook', () => {
 describe('dependencies: a row switched off is not checked', () => {
   test('with every dependent row off, the model row included, nothing is reported and the settings are not even read', async ($, on) => {
     const { world } = await boot($, on, w => {
-      w.files.set(ROWS_FILE, '{"summary":false,"agents":false,"usage":false,"edited":false,"memory_mcp":false,"model":false}')
+      w.files.set(ROWS_FILE, pinSyncOff('{"summary":false,"agents":false,"usage":false,"edited":false,"memory_mcp":false,"model":false}'))
       w.settings = {}
       w.files.delete(REFRESHER)
     })
@@ -275,7 +275,7 @@ describe('dependencies: a row switched off is not checked', () => {
     test(`the ${only} row, the only dependent row on, is still checked`, async ($, on) => {
       const off = Object.fromEntries([...DEPENDENT, 'memory_mcp'].filter(k => k !== only).map(k => [k, false]))
       await boot($, on, w => {
-        w.files.set(ROWS_FILE, JSON.stringify(off))
+        w.files.set(ROWS_FILE, pinSyncOff(JSON.stringify(off)))
         w.settings = {}
       })
       const parts = await paneView($)
@@ -286,7 +286,7 @@ describe('dependencies: a row switched off is not checked', () => {
 
   test('one row off says nothing, the others still report', async ($, on) => {
     await boot($, on, w => {
-      w.files.set(ROWS_FILE, '{"agents":false}')
+      w.files.set(ROWS_FILE, pinSyncOff('{"agents":false}'))
       unwire(w, 'subagent-tracker.js', 'file-tracker.js')
     })
     const parts = await paneView($)
@@ -296,7 +296,7 @@ describe('dependencies: a row switched off is not checked', () => {
 
   test('the refresher is not looked for when the mcp row is off', async ($, on) => {
     const { world } = await boot($, on, w => {
-      w.files.set(ROWS_FILE, '{"memory_mcp":false}')
+      w.files.set(ROWS_FILE, pinSyncOff('{"memory_mcp":false}'))
       w.files.delete(REFRESHER)
     })
     expect(cardOf(await paneView($), 'SYSTEM').body).toEqual(CPU_RAM)
