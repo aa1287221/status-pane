@@ -94,7 +94,7 @@ describe('cards come and go with the toggles, at every breakpoint', () => {
   ]
   for (const [rows, gone, renamed = {}] of CASES) {
     test(`${rows}`, async ($, on) => {
-      await boot($, on, w => w.files.set(ROWS_FILE, pinSyncOff(rows)))
+      await boot($, on, w => w.files.set(ROWS_FILE, pinSyncOff(JSON.stringify({ ...JSON.parse(rows), waiting: false }))))
       for (const { columns, cards } of BREAKPOINTS) {
         const expected = cards
           .map(c => c[0])

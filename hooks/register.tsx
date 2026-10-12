@@ -90,6 +90,7 @@ const ioOf = ($: EngineInterface): Io => ({
   usage: () => $.session.usage(),
   home: () => $.env.get('HOME'),
   tmpdir: () => $.env.get('TMPDIR'),
+  configDir: () => $.env.get('CLAUDE_CONFIG_DIR'),
   effortEnv: () => $.env.get('CLAUDE_EFFORT'),
   compactWindowEnv: () => $.env.get('CLAUDE_CODE_AUTO_COMPACT_WINDOW'),
   inflightWarn: () => $.env.get('STATUS_PANE_INFLIGHT_WARN'),

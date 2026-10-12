@@ -82,6 +82,7 @@ export const makeSnap = (over: Partial<Snap> = {}): Snap => ({
       history: true,
       progress: true,
       fixture: false,
+      waiting: true,
     },
   },
   summary: ok('遷移 statusline 到 mod pane 的討論與實作'),
@@ -283,12 +284,16 @@ const iso = (sec: number) => new Date(sec * 1000).toISOString()
 /** The rows file text with the SYNC row pinned off; the row is on by default, so tests about other rows pin it. */
 export const pinSyncOff = (rows: string): string => JSON.stringify({ ...JSON.parse(rows), sync: false })
 
-/** A healthy session: every row of the SPEC mockup has data and no side file is on disk. Its rows file holds only `"sync": false`, which keeps the on-by-default SYNC card out. */
+/**
+ * A healthy session: every row of the SPEC mockup has data, and nothing is on disk that should not be, bar one file. Unlike a real machine
+ * it has a rows file, `{"waiting":false,"sync":false}` (WAITING and SYNC are on by default and would each add a card to every pane);
+ * the WAITING and SYNC tests overwrite or delete it.
+ */
 export const makeWorld = (): World => {
   const files = new Map<string, string>()
   const put = (path: string, text: string) => files.set(path, text)
-  // SYNC has its own tests (sync.test.ts); here it is off so the cards and error counts stay as they were
-  put('/root/.claude/cc-statusline-rows.json', pinSyncOff('{}'))
+  // SYNC and WAITING have their own tests (sync.test.ts, waitingcard.test.ts); both rows are off here so the cards and error counts stay as they were
+  put('/root/.claude/cc-statusline-rows.json', pinSyncOff('{"waiting":false}'))
   put('/root/.claude/CLAUDE.md', '# global')
   put(`${CWD}/CLAUDE.md`, '# project')
   for (const f of ['a.md', 'b.md', 'c.md', 'notes.txt']) put(`${CWD}/.claude/rules/${f}`, 'r')

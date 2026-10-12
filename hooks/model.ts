@@ -2,6 +2,7 @@
 
 import { syncHint } from './sync'
 import type { AgentGroup, BgItem, BgKind, BgStart, InflightState, CpuSample, HookVerdicts, McpInfo, MemInfo, NowState, Res, RowKey, Snap, Toggles, ToolRun } from './state'
+import { waitingHint } from './waiting'
 
 /** The first line of a failure, less the `<plugin>: $.fs.read: ` the engine puts in front of a refused call. */
 export const why = (err: unknown): string => {
@@ -211,6 +212,7 @@ export const ROW_KEYS: readonly RowKey[] = [
   'progress',
   'sync',
   'fixture',
+  'waiting',
 ]
 
 /** The rows file (L19-31): a missing key or file leaves the row on; `enabled:false` is the master switch. */
@@ -570,6 +572,9 @@ const buildTail = (snap: Snap | null, nowMs: number, tzMin?: number): string | n
   if (!snap || !snap.toggles.enabled) return null
   const on = snap.toggles.rows
   const parts: string[] = []
+  // first, so the trim below drops the other segments before it
+  const wait = on.waiting ? waitingHint(snap, nowMs) : null
+  if (wait) parts.push(wait)
   const ctxPct = on.usage && snap.context.ok ? knownContextPct(snap.context.v) : null
   if (ctxPct !== null) parts.push(`ctx ${Math.round(ctxPct)}%`)
   if (on.quota && snap.quota.ok) {

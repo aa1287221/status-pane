@@ -421,6 +421,12 @@ describe('#8 row toggles file', () => {
     expect(parseToggles('{"cost":1}').rows.cost).toBe(true)
   })
 
+  test('waiting is on by default and off only for a falsy value in the rows file', () => {
+    for (const text of [null, '{}', REAL_ROWS, '{"summary":true}', '{"waiting":1}']) expect(parseToggles(text).rows.waiting).toBe(true)
+    expect(parseToggles('{"waiting":false}').rows.waiting).toBe(false)
+    expect(parseToggles('{"waiting":0}').rows.waiting).toBe(false)
+  })
+
   test('a missing or unreadable file means everything on', () => {
     for (const text of [null, '', '{"enabled":', 'null', '[1]']) {
       const t = parseToggles(text)

@@ -23,6 +23,7 @@ export type RowKey =
   | 'progress'
   | 'sync'
   | 'fixture'
+  | 'waiting'
 
 /** `~/.claude/cc-statusline-rows.json`: master switch plus one flag per row (`fixture` is off unless the file turns it on with the boolean true). */
 export type Toggles = { enabled: boolean; rows: Record<RowKey, boolean> }
@@ -105,6 +106,15 @@ export type KeepState = {
 /** Paths this session's tool calls produced, newest first: a compaction takes the calls out of the transcript, so they are kept here. */
 export type KeptFiles = { sid: string; files: string[]; handoffs: string[] }
 
+/** One open item on the WAITING board; `sinceSec` is epoch seconds, the age and due flag are drawn at the draw clock. */
+export type WaitingItem = { id: string; host: string; what: string; sinceSec: number }
+
+/** A host whose WAITING file cannot be used; `text` is the reader's `n/a（...）`. */
+export type WaitingDown = { host: string; text: string }
+
+/** The open items (since ascending, at most 100; `openTotal` counts them all), the unreadable hosts, and the files past the 16-file cap. */
+export type WaitingData = { items: WaitingItem[]; openTotal: number; down: WaitingDown[]; skipped: number }
+
 export type CpuSample = { idle: number; total: number }
 
 export type MemInfo = { usedKb: number; totalKb: number; pct: number }
@@ -138,6 +148,8 @@ export type Snap = {
   fixture?: Res<{ count: number; observedAtSec: number }>
   /** The in-flight count from the agents tracker; absent when the agents row is off. Optional so older snapshots stay valid. */
   dispatch?: Res<Dispatch>
+  /** The WAITING board (SCHEMA.md kind `waiting`); absent unless the `waiting` row is on. */
+  waiting?: Res<WaitingData>
   /** The SYNC card and tail hint; absent unless the `sync` row is on. */
   sync?: Res<SyncData>
   /** What the settings said of the tracker hooks at this refresh; kept when a later read fails. */
