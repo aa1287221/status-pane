@@ -261,7 +261,10 @@ Age and due are drawn at the draw clock, never stored: `<1h`, `Nh`, `Nd`; due wh
 Title: `N`, `N · D due`, `≥N` when a host is unreadable beside items, `0` for a verified-empty board, `—` when nothing is
 readable. Empty and verified-empty draw `沒有登記`; an unreadable host never draws it. 8 items drawn then `+N more`;
 at most 3 unreadable-host rows then `+N hosts n/a`. A refused `list` makes the card one `n/a（目錄無法列出：…）` and
-counts one error. The tail gets `WAIT N`, `WAIT N (D due)` or `WAIT ≥N` first, and none at 0 open items.
+counts one error. The tail gets `WAIT N`, `WAIT N (D due)` or `WAIT ≥N` in front of the ctx, quota, cost and clock
+segments, and none at 0 open items. When the SYNC segment (#29) shows it sits in front of WAIT:
+`SYNC -3 PULL · WAIT 1 · ctx 3% · 5h 23% · 7d 61%`. The 48-character trim drops from the end, so WAIT outlasts every
+segment but SYNC.
 Stale own copies (SCHEMA 5.3 point 6) are not repaired here: the card shows what the synced files say.
 
 Known limit, the 16-file cap is silent: `skipped` is computed by `collectWaiting` but nothing draws it, not the
@@ -751,7 +754,7 @@ Card     Box width round gray paddingX=1 column               (Section: Box widt
 | 28-4 | name filter and cap | `waiting.test.ts`: `waiting.json`, two-part names and `.tmp` leftovers never opened; 16 read, the rest skipped (`skipped` is not drawn: a known limit, see the WAITING card section) |
 | 28-5 | AC1 empty states | `waiting.test.ts`: absent dir (list throws ENOENT, still 0), non-matching names, all closed, a truncated host beside an empty one reads `—`, not 0 |
 | 28-6 | card layout and rows | `waitingcard.test.ts`: band of one at 36/49/89 after ACTIVITY, before SYSTEM; DUE at the right edge; `+N more`; `≥N`; `—`; 沒有登記 never beside an unreadable host |
-| 28-7 | tail | `waitingcard.test.ts`: `WAIT N`, `(D due)`, `≥N`; none at 0 or unreadable; first segment; row off or master off gives none |
+| 28-7 | tail | `waitingcard.test.ts`: `WAIT N`, `(D due)`, `≥N`; none at 0 or unreadable; first segment, or second behind the SYNC segment when that shows (`SYNC -3 PULL · WAIT 1 · ctx 3%`; each alone leads; the 48-character trim drops the segments behind WAIT first, then WAIT, SYNC last); row off or master off gives none |
 | 28-8 | engine, captured bytes | `waitingcard.test.ts`: the producer capture drawn through `boot`; flipping the closer to open brings X back; rows file off reads no side file; CLAUDE_CONFIG_DIR honoured |
 | 28-9 | default on and the opt-out | `model.test.ts`: `waiting` is on for no file, `{}`, a file without the key and `1`; `false` and `0` switch it off. `waitingcard.test.ts`: no rows file and an empty synced dir read `0` with 沒有登記; a rows file without the key keeps the card and the `WAIT 2` segment. Its mutations are in 28-10 |
 | 28-10 | mutations (run once each, restored) | closed-wins, tie-break, `>=` due, name grammar, host check, exists-first, 16-file cap, control-char rule, link count, row-off gate (collector and tail), 沒有登記 beside down hosts: each turns exactly its named rows red. For 28-9, one change each, restored: (a) `'waiting'` put back into `OPT_IN` in `model.ts` (the row off until the file says boolean `true`) turns 8 tests red, no others: the `model.test.ts` test `waiting is on by default and off only for a falsy value in the rows file`, the two `on by default` engine tests, and the five `#8 row toggles file` tests built on `off()`, which expects every row but `fixture` on; (b) a strict `!== false` reading for `waiting` in `parseTogglesStrict` (so `0` no longer switches it off) turns that test red and no other; (c) the rows file's `waiting` key not read (so `false` cannot switch it off) turns 54 tests red: that test, the rows-file-off engine test and the pane tests that keep the card off with `"waiting":false`, in the world's seed or in their own rows file |

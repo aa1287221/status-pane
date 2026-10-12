@@ -37,7 +37,7 @@ Claude Code 的 function-hooks mod，用來取代原生的 `statusLine`（cc-sta
 - 手動打開或叫回來，輸入 `/status-pane`。
 - `/progress`：回合進行中也立即印出目前的工具與經過時間，以及背景工作（來源是上一次回合結束的快照）（和 PROGRESS 卡同一份資料，不經模型）；資料缺失時印 `n/a（原因）`。
 - `~/.claude/cc-statusline-rows.json` 可以逐列關閉；設成 `"enabled": false` 會整個停用，什麼都不收集、不寫入。
-- WAITING 卡預設開啟（見 #28）：讀 `~/.claude/projects/-project/references/side-files/waiting.<host>.json`，列出所有機器尚未關閉的等待項目（超過 7 天標 DUE）；最多讀 16 個機器檔（依檔名排序），超過的不讀，卡片與提示行也都不提示（已知限制）；沒有項目時顯示「沒有登記」；提示行前面加 `WAIT N`。卡片只讀、不寫入；`"waiting": false` 關閉卡片與提示段。
+- WAITING 卡預設開啟（見 #28）：讀 `~/.claude/projects/-project/references/side-files/waiting.<host>.json`，列出所有機器尚未關閉的等待項目（超過 7 天標 DUE）；最多讀 16 個機器檔（依檔名排序），超過的不讀，卡片與提示行也都不提示（已知限制）；沒有項目時顯示「沒有登記」；提示行最前面加 `WAIT N`，但 SYNC 段有顯示時，SYNC 段排在它前面（`SYNC -3 PULL · WAIT 1 · …`）。卡片只讀、不寫入；`"waiting": false` 關閉卡片與提示段。
 - 加上 `"fixture": true`（只認布林 true，`1`、`"yes"` 不算）會多出一張 FIXTURE 卡，讀 `$TMPDIR/claude-side/fixture.json`（side file 契約的示範，預設關閉）；檔案缺少、過期或損毀時，卡片顯示 `n/a（原因）`。
 - SYNC 卡（claude-memory 與 `origin/sync-data-v2` 的領先／落後、上次 push 與 fetch 時間）預設開啟，提示列也會先顯示 `SYNC -N PULL`。資料來自 `~/.claude/scripts/hooks/sync-status.py`，只讀本地 ref，不連網。沒有這支 producer 的機器上，卡片顯示 `n/a（缺檔）`；超過 15 分鐘沒有重寫（producer 只在 hook 執行時寫檔）則顯示 `n/a（過期 …）`。這兩種是預期中的狀態，只顯示、不算錯誤；其他 n/a（收集失敗、格式錯誤、檔案損毀等）算 SYSTEM 的一個錯誤。要關掉就在 `~/.claude/cc-statusline-rows.json` 加上 `"sync": false`，卡片、提示列的 SYNC 段與可能有的錯誤都會一起消失。
 
