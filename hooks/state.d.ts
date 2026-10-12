@@ -61,6 +61,50 @@ export type BgStart = { kind: 'shell' | 'subagent' | 'cron'; at: number; id?: st
 /** Background work for one session: the last Stop snapshot (`seenAt`, null until one arrives) and the starts since. `dropped` is set when the cap evicted a start since the last Stop. */
 export type InflightState = { sid: string; seenAt: number | null; items: BgItem[]; starts: BgStart[]; dropped?: true }
 
+/** The CONTEXT hint's state: the threshold and mode read at the last measure, and what the box answered (`isShown` null when not asked). */
+export type CompactState = {
+  sid: string
+  mode: 'observe' | 'suggest' | 'off'
+  atPct: number
+  armed: boolean
+  last: { at: number; isShown: boolean | null; why?: string; would?: string } | null
+}
+
+/** What can compact a conversation (the engine's `session.compact` triggers). */
+export type KeepTrigger = 'manual' | 'auto' | 'plugin' | 'precompute'
+
+/** One compaction as the keep-list hook handled it. `would` is what mode `on` would have done; `text` is the block (at most 1500 characters). */
+export type KeepLast = {
+  at: number
+  trigger: KeepTrigger
+  action: 'pass' | 'rewrite' | 'skip'
+  why: string
+  would: 'rewrite' | 'skip' | null
+  /** Items in the block, by section. */
+  counts: { tasks: number; files: number; handoffs: number }
+  /** Items left out of the block by the item and character caps; `gone` is recorded files no longer on disk. */
+  dropped: number
+  gone: number
+  chars: number
+  text: string
+  /** What each section was read from, in words: path, entries read, why it is empty. */
+  sources: { tasks: string; files: string; handoffs: string }
+  /** What could not be read or understood; a directory that is not there is not one. */
+  problems: string[]
+}
+
+/** The keep-list's state: the switches read at the last compaction, how many compactions of each trigger it saw, and the last decision. */
+export type KeepState = {
+  sid: string
+  mode: 'observe' | 'on' | 'off'
+  precompute: 'skip' | 'rewrite'
+  seen: Record<KeepTrigger, number>
+  last: KeepLast | null
+}
+
+/** Paths this session's tool calls produced, newest first: a compaction takes the calls out of the transcript, so they are kept here. */
+export type KeptFiles = { sid: string; files: string[]; handoffs: string[] }
+
 export type CpuSample = { idle: number; total: number }
 
 export type MemInfo = { usedKb: number; totalKb: number; pct: number }
@@ -81,7 +125,8 @@ export type Snap = {
   model: Res<{ name: string; version: string; effort: string | null; configured?: boolean }>
   cost: Res<{ all: number; session: number; durMin: number }>
   agents: Res<AgentGroup[]>
-  context: Res<{ pct: number | null; used: number; max: number; compacts: Res<number> }>
+  /** `max` is the model's window. `autoCompact` is the window the engine compacts at when settings or the environment set one, else `max`; a snapshot older than this field has none. */
+  context: Res<{ pct: number | null; used: number; max: number; compacts: Res<number>; autoCompact?: { window: number; source: 'env' | 'settings' | 'window' } }>
   tokens: Res<{ all: number; session: number }>
   quota: Res<{ five: QuotaWindow; seven: QuotaWindow }>
   cpu: Res<number | null>
@@ -117,6 +162,12 @@ declare module 'claude-code' {
       now: NowState | null
       /** Background tasks and schedules from the Stop snapshot; null until a hook has written it since the plugin loaded. */
       inflight: InflightState | null
+      /** The /compact suggestion for the context fill, written at each `session.measure` that moved context; null until one has. */
+      compact: CompactState | null
+      /** The session.compact keep-list: what the hook saw and decided at the last compaction; null until one has. */
+      keep: KeepState | null
+      /** Files this session wrote or edited and its handoff files, from the `tool.call` hook; read when a compaction is about to run. */
+      kept: KeptFiles
       /** When a refresh last failed to write its snapshot; writing it makes the pane read the clock again. */
       checkedAt: number
     }
