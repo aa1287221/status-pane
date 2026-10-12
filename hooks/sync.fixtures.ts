@@ -1,8 +1,8 @@
 // Test-only: copies of the hub's sync-status fixtures (SCHEMA.md section 9 and 10, ticket #29), one string per line so every byte is visible.
-// Source: aa1287221/claude-workbench contracts/side-file/fixtures/sync-status at commit 39cc4b5. They are canonical there;
+// Source: aa1287221/claude-workbench contracts/side-file/fixtures/sync-status at commit 8018801. They are canonical there;
 // sync.test.ts compares every copy with the sha256 in EXPECTED_TEXT and reads each through the real reader. Never regenerate them with a writer.
 
-export const HUB_COMMIT = '39cc4b5'
+export const HUB_COMMIT = '8018801'
 
 const text = (lines: string[]): string => lines.join('\n') + '\n'
 
@@ -102,11 +102,11 @@ export const EXPECTED_TEXT = text([
   '    {',
   '      "case": "failed",',
   '      "file": "sync-status.failed.json",',
-  '      "sha256": "e441212a8a854f23b13671ba61f48f3b5e49a8aa9ad14171deca21329b52f1d5",',
+  '      "sha256": "56c05b6dc66b9bf67dcb8385ae2b302607bc4de0cb56196ad1df0da2053537e2",',
   '      "source": "producer",',
   '      "scenario": "failed",',
   '      "verdict": "failed",',
-  '      "why": "HEAD on main: wrong_branch; data is null and last_success_at keeps the earlier good read (30 minutes before)"',
+  '      "why": "HEAD on main: wrong_branch with the fixed message HEAD is not on sync-data-v2 (the branch name is not in it); data is null and last_success_at keeps the earlier good read (30 minutes before)"',
   '    },',
   '    {',
   '      "case": "failed-timeout",',
@@ -524,7 +524,7 @@ export const FILES: Record<string, string> = {
     '  "collection_status": "failed",',
     '  "error": {',
     '    "code": "wrong_branch",',
-    '    "message": "HEAD is on main; expected sync-data-v2"',
+    '    "message": "HEAD is not on sync-data-v2"',
     '  },',
     '  "data": null',
     '}',

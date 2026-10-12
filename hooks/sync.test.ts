@@ -73,7 +73,7 @@ describe('sync-status: reader mapping (SCHEMA §9 data)', () => {
     const r = await read('sync-status.failed.json')
     const res = syncOf(r, NOW_SEC)
     expect(res.ok).toBe(false)
-    if (!res.ok) expect(res.why).toMatch(/^n\/a（收集失敗：HEAD is on main/)
+    if (!res.ok) expect(res.why).toMatch(/^n\/a（收集失敗：HEAD is not on sync-data-v2/)
   })
 
   test('a stale file is n/a and its poison count is not in the reason', async () => {
@@ -384,7 +384,8 @@ describe('sync-status: hub fixtures (E2E-01/02)', () => {
     const card = await cardFor('sync-status.failed.json', 89)
     expect(card.value).toBe('')
     const text = card.body.join('').replace(/\s/g, '')
-    expect(text).toContain('n/a（收集失敗：HEADisonmain;expectedsync-data-v2，上次成功')
+    expect(text).toContain('n/a（收集失敗：HEADisnotonsync-data-v2，上次成功')
+    expect(text).not.toContain('main')
     expect(text).not.toMatch(/ahead|behind/)
   })
 
