@@ -36,6 +36,7 @@ import {
 import { effectiveWindow } from './compact'
 import type { EffectiveWindow } from './compact'
 import { fixtureOf, naReason, readSideKind } from './sidefile'
+import { syncOf } from './sync'
 import type { Cum, RlField, RlSnap, RlSnaps, RlWindow } from './model'
 import type { CpuSample, GitCounts, GitInfo, HookVerdicts, QuotaWindow, Res, Snap, Toggles } from './state'
 
@@ -482,7 +483,7 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
     return guard(io, fn, ms)
   }
 
-  const [summary, dir, git, model, agents, compacts, cumRes, quota, cpuRes, ramRes, memory, mcp, edited, side, autoCompactRes] =
+  const [summary, dir, git, model, agents, compacts, cumRes, quota, cpuRes, ramRes, memory, mcp, edited, side, autoCompactRes, syncSide] =
     await Promise.all([
       row(on.summary, [base, summaryWired], () => collectSummary(io, b!)),
       row(on.dir || on.repo, [base], async () => shortDir(b!.cwd, b!.home)),
@@ -507,6 +508,7 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
       row(on.fixture, [base], () => readSideKind(io, 'fixture', { tmpdir: b!.tmp }, {}, input.now)),
       // the settings were read above: every source after the merge, lowest first
       row(on.usage, [base, usage], () => compactWindowOf(io, u!.context.window, settingsRes?.ok ? settingsRes.v.slice(1) : null)),
+      row(on.sync, [base], () => readSideKind(io, 'sync-status', { tmpdir: b!.tmp }, {}, input.now)),
     ])
 
   const fromCum = <T>(f: (c: CumOut) => T): Res<T> =>
@@ -549,6 +551,10 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
   }
   // the reader's own text is the reason (never cut to a short one); absent when the row is off
   if (on.fixture) snap.fixture = side.ok ? fixtureOf(side.v) : { ok: false, why: naReason(side.why) }
+  if (on.sync) snap.sync = syncSide.ok ? syncOf(syncSide.v, input.now / 1000) : { ok: false, why: naReason(syncSide.why) }
+  // a SYNC n/a by design is shown but not counted: no file (no producer here yet), or an aged one (between hook runs);
+  // a row that failed to collect is a fault
+  const syncByDesign = syncSide.ok && (syncSide.v.verdict === 'missing' || syncSide.v.verdict === 'stale')
   // a failure behind a row that is switched off is nothing to report; git counts when its status failed
   const shown: [Res<unknown>, boolean][] = [
     [snap.summary, on.summary],
@@ -568,6 +574,7 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
     [snap.mcp, on.memory_mcp],
     [snap.edited, on.edited],
     [snap.fixture ?? OK, on.fixture],
+    [snap.sync ?? OK, on.sync && !syncByDesign],
   ]
   // a write that had to fall back to a plain one is an error too, whichever row it fed
   const fallbacks = [cumRes, quota].filter(r => r.ok && r.v.fellBack).length
