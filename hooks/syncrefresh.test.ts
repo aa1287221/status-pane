@@ -7,6 +7,8 @@ const PATH = '/root/.claude/scripts/hooks/sync-status.py'
 const MIN5 = 300_000
 const OK: SyncRunResult = { exitCode: 0, stdout: '', stderr: '' }
 
+// the engine typings declare no timers; the runner has them
+declare const setTimeout: (fn: () => void, ms: number) => unknown
 const flush = () => new Promise<void>(resolve => setTimeout(resolve, 0))
 
 /** A clock the test moves by hand: a timer fires as `advance` passes its time, and one set during a firing can fire in the same advance. */
