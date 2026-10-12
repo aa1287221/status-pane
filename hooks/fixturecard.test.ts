@@ -192,6 +192,12 @@ describe('the fixture card: side file to card through the engine', () => {
     expect(lines).toMatch(/1 error\b/)
   })
 
+  test('a stale fixture counts as one error too: only the SYNC card leaves a missing or a stale file out', async ($, on) => {
+    await boot($, on, withFile(FILES['fixture.stale.json']!))
+    const lines = renderTree(await mountPane($, 89).then(u => u.drawn()), 89).join('\n')
+    expect(lines).toMatch(/1 error\b/)
+  })
+
   test('a healthy fixture adds no error', async ($, on) => {
     await boot($, on, withFile(valid))
     const lines = renderTree(await mountPane($, 89).then(u => u.drawn()), 89).join('\n')
