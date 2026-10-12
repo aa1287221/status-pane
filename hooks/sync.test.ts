@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { EXPECTED_TEXT, FILES, HUB_COMMIT, REF_NOW_MS } from './sync.fixtures'
-import { boot, cardOf, hintText, makeSnap, mountPane } from './fixture'
+import { boot, cardOf, hintText, makeSnap, mountPane, stallNext } from './fixture'
+import type { World } from './fixture'
 import { dw, parseTogglesStrict, tailText } from './model'
 import { layoutTree, paneLayout } from './pane'
 import type { Snap, SyncData } from './state'
@@ -423,7 +424,7 @@ describe('sync-status: the row through the engine (on by default, opt-out)', () 
     expect(text).not.toMatch(/\d+ errors?\b/)
   })
 
-  test('on by default and the producer has written nothing: n/a（缺檔）, no tail segment, one error', async ($, on) => {
+  test('on by default and the producer has written nothing: n/a（缺檔）, no tail segment, no error', async ($, on) => {
     await boot($, on, w => {
       w.now = REF_NOW_MS
       w.files.delete(ROWS)
@@ -433,7 +434,7 @@ describe('sync-status: the row through the engine (on by default, opt-out)', () 
     expect(card.value).toBe('')
     expect(card.body.join('').replace(/\s/g, '')).toBe('n/a（缺檔）')
     expect(await hintText($)).not.toMatch(/SYNC/)
-    expect(text).toMatch(/1 error\b/)
+    expect(text).not.toMatch(/\d+ errors?\b/)
   })
 
   test('"sync": false in the rows file hides the card, the tail and the error, and the side file is never read', async ($, on) => {
@@ -447,5 +448,70 @@ describe('sync-status: the row through the engine (on by default, opt-out)', () 
     expect(await hintText($)).not.toMatch(/SYNC/)
     expect(text).not.toMatch(/\d+ errors?\b/)
     expect(world.reads).not.toContain(SIDE)
+  })
+
+  // Owner decision of 2026-10-12 (#29): the card shows every n/a, but only a fault is a SYSTEM error. No file (no producer
+  // on this machine yet) and an aged file (between hook runs, until #91 refreshes it) are by design, not faults.
+  describe('which n/a counts as a SYSTEM error', () => {
+    const failed = FILES['sync-status.failed.json']!
+    /** 20 minutes on from the reference clock: `failed` and `behind` were written 1230 s before, 900 s being the TTL. */
+    const AGED_MS = REF_NOW_MS + 20 * 60_000
+
+    /** A world whose only SYNC input is `file` (none when null), read at `nowMs`. */
+    const serving = (file: string | null, nowMs = REF_NOW_MS) => (w: World) => {
+      w.now = nowMs
+      w.files.delete(ROWS)
+      if (file !== null) w.files.set(SIDE, file)
+    }
+
+    /** The row as the user sees it: the card says `card` (the reader's own text), the tail has no SYNC, the SYSTEM card counts `errors` (no chip is 0). */
+    const expectRow = async ($: Parameters<typeof mountPane>[0], card: RegExp, errors: number) => {
+      const { parts, text } = await drawn($)
+      expect(cardOf(parts, 'SYNC').body.join('').replace(/\s/g, '')).toMatch(card)
+      expect(await hintText($)).not.toMatch(/SYNC/)
+      expect(Number(/(\d+) errors?\b/.exec(text)?.[1] ?? 0)).toBe(errors)
+    }
+
+    test('a stale file: n/a（過期 30m）, no tail segment, no error', async ($, on) => {
+      await boot($, on, serving(FILES['sync-status.stale.json']!))
+      await expectRow($, /^n\/a（過期30m）$/, 0)
+    })
+
+    test('a stale file whose last collection failed: the card says both, no error (the failed file counted before it aged)', async ($, on) => {
+      await boot($, on, serving(failed, AGED_MS))
+      await expectRow($, /^n\/a（過期20m，最後一筆收集失敗：/, 0)
+    })
+
+    test('a fresh failed file: the reader text, no tail segment, one error', async ($, on) => {
+      await boot($, on, serving(failed))
+      await expectRow($, /^n\/a（收集失敗：/, 1)
+    })
+
+    test('a fresh file with a count that is not an integer literal (2.0): malformed, one error', async ($, on) => {
+      await boot($, on, serving(FILES['sync-status.malformed-float.json']!))
+      await expectRow($, /^n\/a（格式錯誤：data\.ahead/, 1)
+    })
+
+    test('a fresh file that the data rules of the card turn away (a branch name with a space): one error', async ($, on) => {
+      await boot($, on, serving(behind.replace('"sync-data-v2"', '"sync data-v2"')))
+      await expectRow($, /^n\/a（格式錯誤：data\.branch/, 1)
+    })
+
+    test('a truncated file is corrupt: one error', async ($, on) => {
+      await boot($, on, serving(behind.slice(0, 100)))
+      await expectRow($, /^n\/a（檔案損毀或被截斷）$/, 1)
+    })
+
+    test('a row whose collection fails (the read outlasts the 5 s guard): n/a（timeout）, one error', async ($, on) => {
+      const { world, advance, clock } = await boot($, on, serving(behind))
+      const release = stallNext(world, `fs.read:${SIDE}`)
+      await advance(30_000)
+      await clock.settle()
+      await advance(5000)
+      await clock.settle()
+      await expectRow($, /^n\/a（timeout）$/, 1)
+      release()
+      await clock.settle()
+    })
   })
 })
