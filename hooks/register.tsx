@@ -5,6 +5,7 @@ import { MCP_EVERY_MS, compactWindowOf, readSources, refresh } from './collect'
 import type { Io } from './collect'
 import { addRun, addStart, bgStartOf, endTask, mayStartBg, noteStop, cannotDraw, DEAD_MS, dropRun, effortFrom, mergeTail, patchLineCount, progressText, runOf, sidOf, STALE_MS, tailText, why } from './model'
 import { HIST_MAX, layoutTree, paneLayout } from './pane'
+import { startSyncRefresh } from './syncrefresh'
 import { readBytesCapped } from './sidefile'
 import type { BgStart, InflightState, NowState, Res } from './state'
 import { COMPACT_TEXT, compactConfig, fillOf, shouldSuggest } from './compact'
@@ -77,6 +78,8 @@ type Run = {
   suggesting: boolean
   /** Releases `suggesting` if the box never settles. */
   suggestGuard: Timer | null
+  /** The producer's own period (#91); restarted whenever the pane's timer is. */
+  sync: { cancel: () => void } | null
 }
 
 /** The seam collect.ts reads and writes through; `$` cannot be passed across an import. */
@@ -219,11 +222,36 @@ const followUp = ($: EngineInterface, run: Run): void => {
   })
 }
 
+/** Starts the producer on its own period. A failure is logged and changes nothing drawn; a card that is off starts nothing. */
+const armSync = ($: EngineInterface, run: Run): void => {
+  run.sync?.cancel()
+  run.sync = startSyncRefresh({
+    after: (ms, fn) => $.clock.after(ms, fn),
+    // the pane's own switches, as the last refresh read them
+    wanted: async () => {
+      const snap = await read($, snapA)
+      return snap !== null && snap.toggles.enabled && snap.toggles.rows.sync
+    },
+    configDir: () => $.env.get('CLAUDE_CONFIG_DIR'),
+    home: () => $.env.get('HOME'),
+    exists: path => $.fs.exists(path),
+    run: (argv, init) => $.process.run(argv, init),
+    log: text => {
+      try {
+        $.ui.log(text, { to: 'debug' })
+      } catch {
+        // the line is lost; nothing drawn depends on it
+      }
+    },
+  })
+}
+
 const arm = ($: EngineInterface, run: Run): void => {
   run.timer?.cancel()
   run.timer = $.clock.every(TICK_MS, () => {
     void tick($, run)
   })
+  armSync($, run)
 }
 
 /** Starts or stops the repaint that moves NOW's elapsed time. */
@@ -580,6 +608,7 @@ export const register: Register = on => {
     lastMcpKick: Number.NEGATIVE_INFINITY,
     suggesting: false,
     suggestGuard: null,
+    sync: null,
   }
 
   on('session.start', async ($, e, next) => {

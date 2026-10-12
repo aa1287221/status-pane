@@ -433,6 +433,7 @@ export const installWorld = (on: On, world: World): { clock: MockClock; advance:
   })
   on('ui.log', (_$, e, next) => {
     world.logged.push({ text: e.text, to: e.to })
+    // the kit has no core `ui.log`: the line is recorded, and the core's refusal is the kit's own note
     return next(e)
   })
 

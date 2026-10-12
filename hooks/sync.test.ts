@@ -526,12 +526,12 @@ describe('sync-status: the mod starts the producer every five minutes (#91)', ()
   const starts = (world: World, argv: string[] = ARGV) => world.ran.filter(r => r.argv.join(' ') === argv.join(' '))
   const debugLines = (world: World) => world.logged.filter(l => l.to === 'debug').map(l => l.text)
 
-  /** The SYNC and SYSTEM cards as drawn: a failed producer must change neither. */
+  /** The SYNC card and the error chip (the SYSTEM card's last line): a failed producer must change neither. The CPU rows move on their own. */
   const cards = async ($: Parameters<typeof mountPane>[0]) => {
     const ui = await mountPane($, 89)
     const parts = paneParts(await ui.drawn(), 89)
     await ui.unmount()
-    return { sync: cardOf(parts, 'SYNC').body.join('|'), system: cardOf(parts, 'SYSTEM').body.join('|') }
+    return { sync: cardOf(parts, 'SYNC').body.join('|'), errors: cardOf(parts, 'SYSTEM').body.at(-1) }
   }
 
   test('on by default the first start is one interval after the mod starts, then one per interval, bounded at 30 s', async ($, on) => {
