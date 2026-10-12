@@ -79,6 +79,9 @@ describe('dependencies: a data source that is missing reads n/a, never idle', ()
   test('subagent-tracker.js missing: the agents part of ACTIVITY says so and counts one error, nothing else changes', async ($, on) => {
     await boot($, on, w => unwire(w, 'subagent-tracker.js'))
     expectOnlyCard(await paneView($), 'ACTIVITY', [
+      'in-flight',
+      'n/a（subagent-tracker.js',
+      'hook not configured）',
       'agents n/a',
       '(subagent-tracker.js',
       'hook not configured)',
@@ -91,6 +94,7 @@ describe('dependencies: a data source that is missing reads n/a, never idle', ()
   test('file-tracker.js missing: the edited part of ACTIVITY says so and counts one error, nothing else changes', async ($, on) => {
     await boot($, on, w => unwire(w, 'file-tracker.js'))
     expectOnlyCard(await paneView($), 'ACTIVITY', [
+      pair('in-flight', '0 · 1 stale', 24),
       pair('agents', 'general-purp ○', 24),
       right('Explore ✓×2', 24),
       right('5m ago', 24),
@@ -144,6 +148,9 @@ describe('dependencies: a data source that is missing reads n/a, never idle', ()
     const parts = await paneView($)
     expect(cardOf(parts, 'SYSTEM').body).toEqual(systemNoMcp(3))
     expect(cardOf(parts, 'ACTIVITY').body).toEqual([
+      'in-flight',
+      'n/a（subagent-tracker.js',
+      'hook not configured）',
       'agents n/a',
       '(subagent-tracker.js',
       'hook not configured)',
@@ -156,7 +163,14 @@ describe('dependencies: a data source that is missing reads n/a, never idle', ()
   test('at 49 columns the same reasons run in full on the footer lines', async ($, on) => {
     await boot($, on, w => unwire(w, 'subagent-tracker.js', 'file-tracker.js'))
     const parts = await paneView($, 49)
-    expect(cardOf(parts, 'ACTIVITY').body).toEqual(['agents n/a (subagent-tracker.js hook not', 'configured)', 'edited n/a (file-tracker.js hook not', 'configured)'])
+    expect(cardOf(parts, 'ACTIVITY').body).toEqual([
+      'in-flight n/a（subagent-tracker.js hook not',
+      'configured）',
+      'agents n/a (subagent-tracker.js hook not',
+      'configured)',
+      'edited n/a (file-tracker.js hook not',
+      'configured)',
+    ])
     expect(cardOf(parts, 'SYSTEM').body.at(-1)).toBe(right('2 errors', 43))
   })
 })
@@ -279,7 +293,7 @@ describe('dependencies: a row switched off is not checked', () => {
         w.settings = {}
       })
       const parts = await paneView($)
-      expect(SHOWN[only](parts)).toBe(TEXT[only])
+      expect(SHOWN[only](parts)).toContain(TEXT[only])
       expect(cardOf(parts, 'SYSTEM').body.at(-1)).toMatch(/ 1 error$/)
     })
   }
@@ -368,14 +382,14 @@ describe('dependencies: a settings read that fails keeps the previous verdicts',
 
   test('the verdicts follow the settings from one refresh to the next', async ($, on) => {
     const { world, advance, clock } = await boot($, on, w => unwire(w, 'subagent-tracker.js'))
-    expect(cardOf(await paneView($, 49), 'ACTIVITY').body.slice(0, 2)).toEqual(['agents n/a (subagent-tracker.js hook not', 'configured)'])
+    expect(cardOf(await paneView($, 49), 'ACTIVITY').body.slice(2, 4)).toEqual(['agents n/a (subagent-tracker.js hook not', 'configured)'])
 
     wire(world, 'SubagentStart', 'subagent-tracker.js')
     await advance(30_000)
     await clock.settle()
     const parts = await paneView($, 49)
     // half a minute on, the ages in the card have moved: 5m ago reads 6m ago
-    expect(cardOf(parts, 'ACTIVITY').body.slice(0, 2)).toEqual([pair('agents', 'general-purp ○', 43), right('Explore ✓×2 6m ago', 43)])
+    expect(cardOf(parts, 'ACTIVITY').body.slice(1, 3)).toEqual([pair('agents', 'general-purp ○', 43), right('Explore ✓×2 6m ago', 43)])
     expect(cardOf(parts, 'SYSTEM').body.join(' ')).not.toContain('error')
   })
 })

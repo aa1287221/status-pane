@@ -226,6 +226,7 @@ export const WORLD_89: PaneSummary = {
     ACTIVITY: {
       value: '',
       body: [
+        pair('in-flight', '0 · 1 stale', 24),
         pair('agents', 'general-purp ○', 24),
         right('Explore ✓×2', 24),
         right('5m ago', 24),
@@ -262,7 +263,7 @@ export const WORLD_49: PaneSummary = {
     },
     ACTIVITY: {
       value: '',
-      body: [pair('agents', 'general-purp ○', 43), right('Explore ✓×2 5m ago', 43), pair('edited', 'register.tsx → SPEC.md →', 43), right('settings.json', 43)],
+      body: [pair('in-flight', '0 · 1 stale', 43), pair('agents', 'general-purp ○', 43), right('Explore ✓×2 5m ago', 43), pair('edited', 'register.tsx → SPEC.md →', 43), right('settings.json', 43)],
     },
     SYSTEM: {
       value: '',

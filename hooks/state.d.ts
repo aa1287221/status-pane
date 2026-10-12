@@ -4,6 +4,9 @@
 /** One collector's outcome: its value, or a short reason the row reads `n/a (...)`. */
 export type Res<T> = { ok: true; v: T } | { ok: false; why: string }
 
+/** The in-flight count of this session's subagents (`dispatchOf` in dispatch.ts); `warn` is STATUS_PANE_INFLIGHT_WARN, null for none. */
+export type Dispatch = { running: number; stale: number; warn: number | null }
+
 export type RowKey =
   | 'summary'
   | 'dir'
@@ -133,6 +136,8 @@ export type Snap = {
   edited: Res<string[]>
   /** The side file demo card (SCHEMA.md kind `fixture`); absent unless the `fixture` row is on. `observedAtSec` is epoch seconds. */
   fixture?: Res<{ count: number; observedAtSec: number }>
+  /** The in-flight count from the agents tracker; absent when the agents row is off. Optional so older snapshots stay valid. */
+  dispatch?: Res<Dispatch>
   /** The SYNC card and tail hint; absent unless the `sync` row is on. */
   sync?: Res<SyncData>
   /** What the settings said of the tracker hooks at this refresh; kept when a later read fails. */

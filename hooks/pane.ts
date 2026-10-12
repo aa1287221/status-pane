@@ -29,7 +29,7 @@ import { keepLabel } from './keeplist'
 import type { CompactState, KeepState } from './state'
 import { ageText } from './sidefile'
 import { SYNC_FETCH_OLD_SEC, syncHead } from './sync'
-import type { AgentGroup, InflightState, NowState, Res, Snap } from './state'
+import type { AgentGroup, Dispatch, InflightState, NowState, Res, Snap } from './state'
 
 export type Seg = { text: string; color?: string; dim?: boolean; bold?: boolean }
 export type Line = Seg[]
@@ -765,11 +765,20 @@ const editedRows = (r: Snap['edited'], inner: number): CardRow[] => {
   return kvRows(EDITED, capped)
 }
 
+/** The in-flight row: the running count; past the warning threshold, when one is set, `N over T` in red and bold. Stale entries trail dim. */
+export const dispatchRows = (r: Res<Dispatch>, inner: number): CardRow[] => {
+  if (!r.ok) return naRows(`in-flight n/a（${r.why}）`, inner)
+  const { running, stale, warn } = r.v
+  const head = warn !== null && running > warn ? seg(`${running} over ${warn}`, { color: PALETTE.red, bold: true }) : seg(`${running}`, {})
+  return kv('in-flight', stale > 0 ? [head, dim(` · ${stale} stale`)] : [head], inner)
+}
+
 const activityCard = (snap: Snap, width: number, inner: number, c: Ctx): Card => {
   const on = snap.toggles.rows
   const rows: CardRow[] = [titleRow('ACTIVITY', null, inner)]
   // narrow: a row for each agent and each file; wider: the groups and the files flowing over a few rows
   const narrow = c.tier === 'narrow'
+  if (on.agents && snap.dispatch) rows.push(...dispatchRows(snap.dispatch, inner))
   if (on.agents) rows.push(...(narrow ? agentsRowsNarrow : agentsRows)(snap.agents, c.nowMs, inner))
   if (on.edited) rows.push(...(narrow ? editedRowsNarrow(snap.edited, inner) : editedRows(snap.edited, inner)))
   return { id: 'activity', width, rows }

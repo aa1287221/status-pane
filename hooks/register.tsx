@@ -92,6 +92,7 @@ const ioOf = ($: EngineInterface): Io => ({
   tmpdir: () => $.env.get('TMPDIR'),
   effortEnv: () => $.env.get('CLAUDE_EFFORT'),
   compactWindowEnv: () => $.env.get('CLAUDE_CODE_AUTO_COMPACT_WINDOW'),
+  inflightWarn: () => $.env.get('STATUS_PANE_INFLIGHT_WARN'),
   settings: source => $.settings.read(source ? { source } : undefined),
   exists: path => $.fs.exists(path),
   read: path => $.fs.read(path),
