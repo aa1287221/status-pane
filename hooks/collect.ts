@@ -567,6 +567,9 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
   // a SYNC n/a by design is shown but not counted: no file (no producer here yet), or an aged one (between hook runs);
   // a row that failed to collect is a fault
   const syncByDesign = syncSide.ok && (syncSide.v.verdict === 'missing' || syncSide.v.verdict === 'stale')
+  // no tracker file is by design too (the first dispatch writes it): the in-flight row shows n/a but is not counted;
+  // an unreadable or corrupt file is a fault
+  const dispatchByDesign = agentsRes.ok && agentsRes.v.text === null
   // a failure behind a row that is switched off is nothing to report; git counts when its status failed
   const shown: [Res<unknown>, boolean][] = [
     [snap.summary, on.summary],
@@ -577,7 +580,7 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
     [snap.cost, on.cost],
     [snap.agents, on.agents],
     // a failed tracker read is one cause: the agents row already counts it
-    [snap.agents.ok && snap.dispatch ? snap.dispatch : OK, on.agents],
+    [snap.agents.ok && snap.dispatch ? snap.dispatch : OK, on.agents && !dispatchByDesign],
     [snap.context, on.usage],
     [snap.context.ok ? snap.context.v.compacts : OK, on.usage],
     [snap.tokens, on.usage],
