@@ -261,8 +261,8 @@ describe('item rules (SCHEMA 9): each violation makes that host n/a with its rea
     ['what empty', { what: '' }, 'what 不是 1 到 200 個字元'],
     ['what 201 code points', { what: 'a'.repeat(201) }, 'what 不是 1 到 200 個字元'],
     ['what contains U+0085', { what: 'ab\u0085c' }, 'what 含控制字元'],
-    ['what contains U+2028', { what: 'ab c' }, 'what 含控制字元'],
-    ['what whitespace-only', { what: '   　 ' }, 'what 只有空白'],
+    ['what contains U+2028', { what: 'ab\u2028c' }, 'what 含控制字元'],
+    ['what whitespace-only', { what: '   \u3000 ' }, 'what 只有空白'],
     ['links 6 entries', { links: Array.from({ length: 6 }, () => 'https://example.com/a') }, 'links 超過 5 個'],
     ['links with credentials', { links: ['https://u:p@e.com'] }, 'links[0] 不是 http(s) URL'],
     ['links javascript scheme', { links: ['javascript:x'] }, 'links[0] 不是 http(s) URL'],

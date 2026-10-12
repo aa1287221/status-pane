@@ -156,9 +156,9 @@ describe('the WAITING card: title and rows', () => {
   })
 
   test('bidi controls inside the text are not drawn', () => {
-    const body = bodyText(snapOf([item({ what: 'ab‮cd‏ef' })]))
-    expect(body).not.toContain('‮')
-    expect(body).not.toContain('‏')
+    const body = bodyText(snapOf([item({ what: 'ab\u202ecd\u200fef' })]))
+    expect(body).not.toContain('\u202e')
+    expect(body).not.toContain('\u200f')
     expect(body).toContain('abcdef')
   })
 })
