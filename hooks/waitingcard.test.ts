@@ -186,6 +186,20 @@ describe('the WAITING tail segment', () => {
     expect(text.length).toBeLessThanOrEqual(48)
   })
 
+  test('the SYNC segment, when it shows, sits in front of WAIT; each alone leads; the trim drops everything but SYNC before WAIT', () => {
+    const toggles = { enabled: true, rows: { ...makeSnap().toggles.rows, sync: true } }
+    const sync = (ahead: number, behind: number): Snap['sync'] => ({
+      ok: true,
+      v: { branch: 'sync-data-v2', upstream: 'origin/sync-data-v2', ahead, behind, lastPushSec: null, lastFetchSec: null, observedAtSec: REF_NOW / 1000 },
+    })
+    expect(tail(makeSnap({ toggles, sync: sync(0, 3), waiting: board([item()]) }))).toMatch(/^SYNC -3 PULL · WAIT 1 · ctx 3%/)
+    expect(tail(makeSnap({ toggles, waiting: board([item()]) }))).toMatch(/^WAIT 1 · ctx 3%/)
+    expect(tail(makeSnap({ toggles, sync: sync(0, 3) }))).toMatch(/^SYNC -3 PULL · ctx 3%/)
+    // 21 + 3 + 16 characters: not even `ctx 3%` fits behind them
+    const due = Array.from({ length: 12 }, (_, i) => item({ id: `hosta-aaaa${String(i + 1).padStart(4, '0')}`, sinceSec: DUE_SINCE }))
+    expect(tail(makeSnap({ toggles, sync: sync(1234, 5678), waiting: board(due) }))).toBe('SYNC +999+ -999+ PULL · WAIT 12 (12 due)')
+  })
+
   test('the row off or the master switch off: no segment; a snapshot without the field: none', () => {
     const rows = makeSnap({ waiting: board([item()]) }).toggles.rows
     expect(tail(makeSnap({ waiting: board([item()]), toggles: { enabled: true, rows: { ...rows, waiting: false } } }))).not.toContain('WAIT')
