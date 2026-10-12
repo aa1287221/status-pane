@@ -530,6 +530,9 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
   // the reader's own text is the reason (never cut to a short one); absent when the row is off
   if (on.fixture) snap.fixture = side.ok ? fixtureOf(side.v) : { ok: false, why: naReason(side.why) }
   if (on.sync) snap.sync = syncSide.ok ? syncOf(syncSide.v, input.now / 1000) : { ok: false, why: naReason(syncSide.why) }
+  // a SYNC n/a by design is shown but not counted: no file (no producer here yet), or an aged one (between hook runs);
+  // a row that failed to collect is a fault
+  const syncByDesign = syncSide.ok && (syncSide.v.verdict === 'missing' || syncSide.v.verdict === 'stale')
   // a failure behind a row that is switched off is nothing to report; git counts when its status failed
   const shown: [Res<unknown>, boolean][] = [
     [snap.summary, on.summary],
@@ -549,7 +552,7 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
     [snap.mcp, on.memory_mcp],
     [snap.edited, on.edited],
     [snap.fixture ?? OK, on.fixture],
-    [snap.sync ?? OK, on.sync],
+    [snap.sync ?? OK, on.sync && !syncByDesign],
   ]
   // a write that had to fall back to a plain one is an error too, whichever row it fed
   const fallbacks = [cumRes, quota].filter(r => r.ok && r.v.fellBack).length
