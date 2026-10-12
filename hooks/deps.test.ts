@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { HEADER_89_DETAIL, HEADER_89_MODEL, WORLD_89, boot, cardOf, headerOf, paneText, paneView, pair, pinSyncOff, right, summarize, trackerCommand, trackerHooks, without } from './fixture'
+import { HEADER_89_DETAIL, HEADER_89_MODEL, QUIET_HINT, WORLD_89, boot, cardOf, headerOf, paneText, paneView, pair, pinSyncOff, right, summarize, trackerCommand, trackerHooks, without } from './fixture'
 import type { World } from './fixture'
 import type { PaneParts } from './tree'
 
@@ -118,7 +118,7 @@ describe('dependencies: a data source that is missing reads n/a, never idle', ()
     expect(without(cards, 'CONTEXT', 'SYSTEM')).toEqual(without(WORLD_89.cards, 'CONTEXT', 'SYSTEM'))
     expect(cards.CONTEXT).toEqual({
       value: '3%',
-      body: [WORLD_89.cards.CONTEXT!.body[0], pair('used', '32.0K / 1.0M', 25), 'compact n/a', '(compact-monitor.js hook', 'not configured)'],
+      body: [WORLD_89.cards.CONTEXT!.body[0], pair('used', '32.0K / 1.0M', 25), 'compact n/a', '(compact-monitor.js hook', 'not configured)', QUIET_HINT],
     })
     expect(cards.SYSTEM?.body).toEqual(systemWith(1))
   })
@@ -267,7 +267,7 @@ describe('dependencies: a row switched off is not checked', () => {
   const SHOWN: Record<(typeof DEPENDENT)[number], (p: PaneParts) => string> = {
     summary: p => headerOf(p).body[1] ?? '',
     agents: p => cardOf(p, 'ACTIVITY').body.join(' '),
-    usage: p => cardOf(p, 'CONTEXT').body.slice(2).join(' '),
+    usage: p => cardOf(p, 'CONTEXT').body.slice(2).filter(row => row !== QUIET_HINT).join(' '),
     edited: p => cardOf(p, 'ACTIVITY').body.join(' '),
   }
   const TEXT: Record<(typeof DEPENDENT)[number], string> = { summary: SUMMARY_NA, agents: AGENTS_NA, usage: COMPACT_NA, edited: EDITED_NA }

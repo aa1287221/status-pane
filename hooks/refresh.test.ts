@@ -8,6 +8,7 @@ import {
   HEADER_89_MODEL,
   MOCKUP_AT,
   NOW_SEC,
+  QUIET_HINT,
   SID,
   TURN_DONE,
   WORLD_89,
@@ -129,7 +130,7 @@ describe('the cum file', () => {
     await clock.settle()
 
     const context = cardOf(await paneView($), 'CONTEXT')
-    expect([context.value, context.body]).toEqual(['—', ['░'.repeat(25), spread('used', '— / 200.0K', 25), spread('compact', '2', 25)]])
+    expect([context.value, context.body]).toEqual(['—', ['░'.repeat(25), spread('used', '— / 200.0K', 25), spread('compact', '2', 25), QUIET_HINT]])
     expect(await hintText($)).toMatch(/^\? for shortcuts\|5h 23% · 7d 61% · \$3\.50 · \d\d:\d\d$/)
   })
 

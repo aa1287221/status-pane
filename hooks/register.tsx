@@ -1,12 +1,14 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import { MCP_EVERY_MS, refresh } from './collect'
+import { MCP_EVERY_MS, compactWindowOf, readSources, refresh } from './collect'
 import type { Io } from './collect'
 import { addRun, addStart, bgStartOf, endTask, mayStartBg, noteStop, cannotDraw, DEAD_MS, dropRun, effortFrom, mergeTail, patchLineCount, progressText, runOf, sidOf, STALE_MS, tailText, why } from './model'
 import { HIST_MAX, layoutTree, paneLayout } from './pane'
 import { readBytesCapped } from './sidefile'
 import type { BgStart, InflightState, NowState, Res } from './state'
+import { COMPACT_TEXT, compactConfig, fillOf, shouldSuggest } from './compact'
+import type { CompactState } from './state'
 
 const PANE = 'status-pane'
 const TICK_MS = 30_000
@@ -30,6 +32,7 @@ const histA = atom({ plugin: 'status-pane', key: 'cpuHist' } as const, [] as num
 const checkedA = atom({ plugin: 'status-pane', key: 'checkedAt' } as const, 0)
 const nowA = atom({ plugin: 'status-pane', key: 'now' } as const, null)
 const inflightA = atom({ plugin: 'status-pane', key: 'inflight' } as const, null)
+const compactA = atom({ plugin: 'status-pane', key: 'compact' } as const, null as CompactState | null)
 
 /** What one load of the module keeps in memory; everything drawn lives in $.state. */
 type Run = {
@@ -47,6 +50,10 @@ type Run = {
   epoch: number
   lastTickAt: number
   lastMcpKick: number
+  /** A /compact suggestion is in flight; a measure that arrives meanwhile sends nothing. */
+  suggesting: boolean
+  /** Releases `suggesting` if the box never settles. */
+  suggestGuard: Timer | null
 }
 
 /** The seam collect.ts reads and writes through; `$` cannot be passed across an import. */
@@ -61,6 +68,7 @@ const ioOf = ($: EngineInterface): Io => ({
   home: () => $.env.get('HOME'),
   tmpdir: () => $.env.get('TMPDIR'),
   effortEnv: () => $.env.get('CLAUDE_EFFORT'),
+  compactWindowEnv: () => $.env.get('CLAUDE_CODE_AUTO_COMPACT_WINDOW'),
   settings: source => $.settings.read(source ? { source } : undefined),
   exists: path => $.fs.exists(path),
   read: path => $.fs.read(path),
@@ -295,6 +303,68 @@ const noteBgStop = async ($: EngineInterface, run: Run, e: { agent_id?: string; 
   }
 }
 
+/** Records what the box answered; a refusal or no answer re-arms the crossing so the next measure tries again. Never throws. */
+const noteSuggest = async ($: EngineInterface, sid: string, at: number, out: { isShown: boolean } | { why: string }): Promise<void> => {
+  try {
+    const shown = 'isShown' in out && out.isShown
+    await update($, compactA, s =>
+      s && s.sid === sid ? { ...s, armed: shown ? s.armed : true, last: 'isShown' in out ? { at, isShown: out.isShown } : { at, isShown: null, why: out.why } } : s,
+    )
+  } catch {
+    // the last answer stays; the card then shows the answer before this one
+  }
+}
+
+/** Decides the CONTEXT hint for one measure that moved context; in suggest mode pre-fills the box once per crossing. Never throws. */
+const noteMeasure = async ($: EngineInterface, run: Run, e: { changed: readonly string[]; context: { tokens?: number; window?: number } }): Promise<void> => {
+  try {
+    if (!e.changed.includes('context')) return
+    const snap = await read($, snapA)
+    if (!snap || !snap.toggles.enabled || !snap.toggles.rows.usage) return
+    const cfg = compactConfig(await $.env.get('STATUS_PANE_CTX_AT'), await $.env.get('STATUS_PANE_CTX_SUGGEST'))
+    const sid = sidOf(await $.session.id())
+    const now = await $.clock.now()
+    // the window is worked out afresh: a /model or a settings edit since the last refresh moves it
+    const io = ioOf($)
+    const win = await compactWindowOf(io, e.context.window, await readSources(io))
+    const d = shouldSuggest(await read($, compactA), sid, fillOf({ tokens: e.context.tokens, window: win?.window ?? e.context.window }), cfg)
+    const send = d.fire && cfg.mode === 'suggest' && !run.suggesting
+    // the claim is taken before the first await of the send, so a burst folds into one call
+    if (send) run.suggesting = true
+    let next = d.next
+    if (d.fire && cfg.mode === 'observe') next = { ...next, last: { at: now, isShown: null, would: COMPACT_TEXT } }
+    if (send) next = { ...next, last: { at: now, isShown: null } }
+    try {
+      await update($, compactA, () => next)
+    } catch {
+      run.suggesting = false
+      return
+    }
+    if (!send) return
+    try {
+      run.suggestGuard?.cancel()
+      run.suggestGuard = $.clock.after(3000, () => {
+        run.suggesting = false
+      })
+      void $.prompt
+        .suggest({ text: COMPACT_TEXT })
+        .then(
+          r => noteSuggest($, sid, now, { isShown: r.isShown === true }),
+          (err: unknown) => noteSuggest($, sid, now, { why: why(err) }),
+        )
+        .finally(() => {
+          run.suggestGuard?.cancel()
+          run.suggesting = false
+        })
+    } catch {
+      run.suggestGuard?.cancel()
+      run.suggesting = false
+    }
+  } catch {
+    // the hint keeps what it was; a measure never fails the turn
+  }
+}
+
 const noteEffort = async ($: EngineInterface, input: unknown): Promise<void> => {
   try {
     const level = effortFrom(input)
@@ -318,6 +388,8 @@ export const register: Register = on => {
     epoch: 0,
     lastTickAt: Number.NEGATIVE_INFINITY,
     lastMcpKick: Number.NEGATIVE_INFINITY,
+    suggesting: false,
+    suggestGuard: null,
   }
 
   on('session.start', async ($, e, next) => {
@@ -419,6 +491,11 @@ export const register: Register = on => {
     return next(e)
   })
 
+  on('session.measure', async ($, e, next) => {
+    await noteMeasure($, run, e)
+    return next(e)
+  })
+
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     try {
       const table = $.ui.resolve(e)
@@ -430,7 +507,8 @@ export const register: Register = on => {
       const progress = await progressSources($, run)
       // a Raster is drawn on the terminal only; every other surface gets the text gauge and sparkline
       const raster = e.surface === 'terminal'
-      const layout = paneLayout(snap, { columns: e.props.bodyColumns, nowMs, raster, cpuHist, progress })
+      const compact = await read($, compactA).catch(() => null)
+      const layout = paneLayout(snap, { columns: e.props.bodyColumns, nowMs, raster, cpuHist, progress, compact })
       return layoutTree(layout, {
         Box: table.Box,
         Text: table.Text,

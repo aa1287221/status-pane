@@ -204,10 +204,13 @@ export const cardOf = (parts: PaneParts, title: string): CardView =>
 /** The header card: the model and the liveness, then the summary. */
 export const headerOf = (parts: PaneParts): CardView => parts.cards[0] ?? cardOf(parts, '')
 
+/** The CONTEXT card's hint while usage is under the line: always drawn, one row at every width the fixtures use. */
+export const QUIET_HINT = '達 60% 建議 /compact'
+
 /** The pane of a healthy `makeWorld()` after its first refresh at 89 columns (wide), as `summarize` reads it. */
 export const WORLD_89: PaneSummary = {
   cards: {
-    CONTEXT: { value: '3%', body: [`▊${'░'.repeat(24)}`, pair('used', '32.0K / 1.0M', 25), pair('compact', '2', 25)] },
+    CONTEXT: { value: '3%', body: [`▊${'░'.repeat(24)}`, pair('used', '32.0K / 1.0M', 25), pair('compact', '2', 25), QUIET_HINT] },
     '5H': { value: '23%', body: [`█████▌${'░'.repeat(18)}`, ...resetsLines('2h 10m', clockAfter(MOCKUP_AT, 7800, false), 24)] },
     '7D': { value: '61%', body: [`${'█'.repeat(14)}▋${'░'.repeat(9)}`, ...resetsLines('3d 4h', clockAfter(MOCKUP_AT, 3 * 86_400 + 4 * 3600, true), 24)] },
     COST: {
@@ -244,7 +247,7 @@ export const HEADER_89_DETAIL = '遷移 statusline 到 mod pane 的討論與實�
 /** The same at 49 columns (medium): the full matrix needs 23 cells here and COST can have 22, so it reads sess and tok; GIT keeps 18. */
 export const WORLD_49: PaneSummary = {
   cards: {
-    CONTEXT: { value: '3%', body: [`█▎${'░'.repeat(41)}`, pair('used 32.0K / 1.0M', 'compact 2', 43)] },
+    CONTEXT: { value: '3%', body: [`█▎${'░'.repeat(41)}`, pair('used 32.0K / 1.0M', 'compact 2', 43), QUIET_HINT] },
     '5H': { value: '23%', body: [`████▍${'░'.repeat(14)}`, ...resetsLines('2h10m', clockAfter(MOCKUP_AT, 7800, false), 19)] },
     '7D': { value: '61%', body: [`${'█'.repeat(11)}▋${'░'.repeat(7)}`, ...resetsLines('3d4h', clockAfter(MOCKUP_AT, 3 * 86_400 + 4 * 3600, true), 19)] },
     COST: {

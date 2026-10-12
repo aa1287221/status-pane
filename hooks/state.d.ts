@@ -58,6 +58,15 @@ export type BgStart = { kind: 'shell' | 'subagent' | 'cron'; at: number; id?: st
 /** Background work for one session: the last Stop snapshot (`seenAt`, null until one arrives) and the starts since. `dropped` is set when the cap evicted a start since the last Stop. */
 export type InflightState = { sid: string; seenAt: number | null; items: BgItem[]; starts: BgStart[]; dropped?: true }
 
+/** The CONTEXT hint's state: the threshold and mode read at the last measure, and what the box answered (`isShown` null when not asked). */
+export type CompactState = {
+  sid: string
+  mode: 'observe' | 'suggest' | 'off'
+  atPct: number
+  armed: boolean
+  last: { at: number; isShown: boolean | null; why?: string; would?: string } | null
+}
+
 export type CpuSample = { idle: number; total: number }
 
 export type MemInfo = { usedKb: number; totalKb: number; pct: number }
@@ -78,7 +87,8 @@ export type Snap = {
   model: Res<{ name: string; version: string; effort: string | null; configured?: boolean }>
   cost: Res<{ all: number; session: number; durMin: number }>
   agents: Res<AgentGroup[]>
-  context: Res<{ pct: number | null; used: number; max: number; compacts: Res<number> }>
+  /** `max` is the model's window. `autoCompact` is the window the engine compacts at when settings or the environment set one, else `max`; a snapshot older than this field has none. */
+  context: Res<{ pct: number | null; used: number; max: number; compacts: Res<number>; autoCompact?: { window: number; source: 'env' | 'settings' | 'window' } }>
   tokens: Res<{ all: number; session: number }>
   quota: Res<{ five: QuotaWindow; seven: QuotaWindow }>
   cpu: Res<number | null>
@@ -112,6 +122,8 @@ declare module 'claude-code' {
       now: NowState | null
       /** Background tasks and schedules from the Stop snapshot; null until a hook has written it since the plugin loaded. */
       inflight: InflightState | null
+      /** The /compact suggestion for the context fill, written at each `session.measure` that moved context; null until one has. */
+      compact: CompactState | null
       /** When a refresh last failed to write its snapshot; writing it makes the pane read the clock again. */
       checkedAt: number
     }

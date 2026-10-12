@@ -24,6 +24,8 @@ import {
   staleness,
 } from './model'
 import type { Inflight, Progress, Tone } from './model'
+import { DEFAULT_AT, adviceOf, fillOf, modeLabel } from './compact'
+import type { CompactState } from './state'
 import { ageText } from './sidefile'
 import { SYNC_FETCH_OLD_SEC, syncHead } from './sync'
 import type { AgentGroup, InflightState, NowState, Res, Snap } from './state'
@@ -41,6 +43,8 @@ export type PaneView = {
   cpuHist?: readonly number[]
   /** What the PROGRESS card is drawn from; without it the card is left out. */
   progress?: { tools: Res<NowState | null>; sid: Res<string>; inflight?: Res<InflightState | null> }
+  /** The /compact state the CONTEXT hint's mode line is drawn from; without it the line is left out. */
+  compact?: CompactState | null
 }
 
 export type CardId = 'header' | 'context' | '5h' | '7d' | 'cost' | 'git' | 'activity' | 'system' | 'progress' | 'sync' | 'fixture' | 'status'
@@ -358,7 +362,20 @@ const kvRows = (label: string, rows: Line[]): CardRow[] =>
 /** A cell of `width` cells with `text` against its right edge. */
 const cell = (text: string, width: number): string => ' '.repeat(Math.max(0, width - dw(text))) + text
 
-const contextCard = (snap: Snap, width: number, inner: number): Card => {
+/** The threshold hint under the CONTEXT rows: quiet under the line, the toned alert and the mode line at it. `base` is the window the line is taken of. */
+const compactRows = (fill: number | null, compact: CompactState | null, inner: number, base: number, max: number): CardRow[] => {
+  const atPct = compact?.atPct ?? DEFAULT_AT
+  const advice = adviceOf(fill, { atPct })
+  // the figure is told only when the line is taken of a smaller window than the one `used` is told against
+  const figure = base < max ? ` (${fmtTok(Math.round((atPct * base) / 100))})` : ''
+  if (advice === null) return wrapWords(`達 ${atPct}%${figure} 建議 /compact`, inner).map((t): CardRow => ({ kind: 'text', line: [dim(t)] }))
+  const tone = PALETTE[pctColor(advice.pct)]
+  const rows: CardRow[] = wrapWords(`△ 已達 ${atPct}%${figure} · 建議 /compact`, inner).map((t): CardRow => ({ kind: 'text', line: [seg(t, { color: tone })] }))
+  if (compact) rows.push(...kv('suggest', [plain(modeLabel(compact))], inner))
+  return rows
+}
+
+const contextCard = (snap: Snap, width: number, inner: number, compact: CompactState | null): Card => {
   const r = snap.context
   if (!r.ok) return { id: 'context', width, rows: [titleRow('CONTEXT', null, inner), ...naRows(`n/a (${r.why})`, inner)] }
   const { used, max, compacts } = r.v
@@ -375,6 +392,8 @@ const contextCard = (snap: Snap, width: number, inner: number): Card => {
     if (widthOf(usedPair) + 3 + widthOf(compactPair) <= inner) rows.push({ kind: 'split', parts: [usedPair, compactPair] })
     else rows.push(...kv('used', [plain(figure)], inner), ...kv('compact', [plain(String(compacts.v))], inner))
   }
+  const base = r.v.autoCompact?.window ?? max
+  rows.push(...compactRows(fillOf({ tokens: used, window: base }), compact, inner, base, max))
   return { id: 'context', width, rows }
 }
 
@@ -972,7 +991,7 @@ export const paneLayout = (snap: Snap | null, view: PaneView): Layout => {
           : [['progress'], ['context', '5h', '7d'], ['cost', 'git', 'activity'], ['system'], ['sync'], ['fixture']]
     const build = (id: BandId, width: number): Card => {
       const inner = innerOf(width)
-      if (id === 'context') return contextCard(snap, width, inner)
+      if (id === 'context') return contextCard(snap, width, inner, view.compact ?? null)
       if (id === '5h' || id === '7d') return quotaCard(snap, id, width, inner, c)
       if (id === 'cost') return costCard(snap, width, inner)
       if (id === 'git') return gitCard(snap, width, inner)
