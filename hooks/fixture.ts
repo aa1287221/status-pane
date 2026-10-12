@@ -183,8 +183,11 @@ export type World = {
   writes: { path: string; text: string }[]
   /** Every `mv` the plugin ran that moved something. */
   moves: { from: string; to: string }[]
-  ran: { argv: string[]; cwd: string | undefined; env: Record<string, string> | undefined }[]
+  /** `init` keeps the stdin and the timeout a command was given. */
+  ran: { argv: string[]; cwd: string | undefined; env: Record<string, string> | undefined; init: { stdin?: string; timeoutMs?: number } }[]
   armed: number[]
+  /** Every `$.ui.log` line, with the sink it was sent to. */
+  logged: { text: string; to: string }[]
 }
 
 /** What a test compares of a pane: the cards by title (the header apart) and the lines under them. */
@@ -386,6 +389,7 @@ export const makeWorld = (): World => {
     moves: [],
     ran: [],
     armed: [],
+    logged: [],
   }
 }
 
@@ -425,6 +429,11 @@ export const installWorld = (on: On, world: World): { clock: MockClock; advance:
   on('env.get', (_$, e) => (world.denyEnv.has(e.name) ? { deny: `env ${e.name} refused` } : { value: world.env[e.name] }))
   on('ui.invalidate', (_$, e, next) => {
     world.invalidated.push(e.event)
+    return next(e)
+  })
+  on('ui.log', (_$, e, next) => {
+    world.logged.push({ text: e.text, to: e.to })
+    // the kit has no core `ui.log`: the line is recorded, and the core's refusal is the kit's own note
     return next(e)
   })
 
@@ -499,7 +508,7 @@ export const installWorld = (on: On, world: World): { clock: MockClock; advance:
     return { value: entries }
   })
   on('process.run', async (_$, e) => {
-    world.ran.push({ argv: [...e.argv], cwd: e.init?.cwd, env: e.init?.env })
+    world.ran.push({ argv: [...e.argv], cwd: e.init?.cwd, env: e.init?.env, init: { stdin: e.init?.stdin, timeoutMs: e.init?.timeoutMs } })
     if (world.hang.has(`process.run:${e.argv.join(' ')}`)) return new Promise<never>(() => {})
     const wait = world.delay.get(`process.run:${e.argv.join(' ')}`)
     if (wait) await clock.sleep(wait)

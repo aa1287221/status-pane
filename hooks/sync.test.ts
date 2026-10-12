@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { EXPECTED_TEXT, FILES, HUB_COMMIT, REF_NOW_MS } from './sync.fixtures'
-import { boot, cardOf, hintText, makeSnap, mountPane, stallNext } from './fixture'
+import { TURN_DONE, boot, cardOf, hintText, makeSnap, mountPane, stallNext } from './fixture'
 import type { World } from './fixture'
 import { dw, parseTogglesStrict, tailText } from './model'
 import { layoutTree, paneLayout } from './pane'
@@ -513,5 +513,164 @@ describe('sync-status: the row through the engine (on by default, opt-out)', () 
       release()
       await clock.settle()
     })
+  })
+})
+
+describe('sync-status: the mod starts the producer every five minutes (#91)', () => {
+  const MIN5 = 300_000
+  const ROWS = '/root/.claude/cc-statusline-rows.json'
+  const PROD = '/root/.claude/scripts/hooks/sync-status.py'
+  const PROD_CFG = '/opt/cc/scripts/hooks/sync-status.py'
+  const ARGV = ['python3', '-I', '-B', PROD, '--print']
+  const RUN_KEY = (argv: string[]) => `process.run:${argv.join(' ')}`
+  const starts = (world: World, argv: string[] = ARGV) => world.ran.filter(r => r.argv.join(' ') === argv.join(' '))
+  const debugLines = (world: World) => world.logged.filter(l => l.to === 'debug').map(l => l.text)
+
+  /** The SYNC card and the error chip (the SYSTEM card's last line): a failed producer must change neither. The CPU rows move on their own. */
+  const cards = async ($: Parameters<typeof mountPane>[0]) => {
+    const ui = await mountPane($, 89)
+    const parts = paneParts(await ui.drawn(), 89)
+    await ui.unmount()
+    return { sync: cardOf(parts, 'SYNC').body.join('|'), errors: cardOf(parts, 'SYSTEM').body.at(-1) }
+  }
+
+  test('on by default the first start is one interval after the mod starts, then one per interval, bounded at 30 s', async ($, on) => {
+    const { world, advance } = await boot($, on, w => {
+      w.files.delete(ROWS)
+      w.files.set(PROD, '# producer')
+      w.procs.set(ARGV.join(' '), { exitCode: 0 })
+    })
+    expect(starts(world).length).toBe(0)
+    await advance(MIN5 - 1000)
+    expect(starts(world).length).toBe(0)
+    await advance(1000)
+    expect(starts(world).length).toBe(1)
+    expect(starts(world)[0]?.init).toEqual({ stdin: '{}', timeoutMs: 30_000 })
+    await advance(MIN5)
+    expect(starts(world).length).toBe(2)
+  })
+
+  test('"sync": false: the producer is never started, however long the mod runs', async ($, on) => {
+    const { world, advance } = await boot($, on, w => {
+      w.files.set(ROWS, '{"sync":false}')
+      w.files.set(PROD, '# producer')
+      w.procs.set(ARGV.join(' '), { exitCode: 0 })
+    })
+    await advance(3 * MIN5)
+    expect(starts(world).length).toBe(0)
+    expect(debugLines(world).filter(t => /sync-status/.test(t))).toEqual([])
+  })
+
+  test('"enabled": false: the producer is never started either, however long the mod runs', async ($, on) => {
+    const { world, advance } = await boot($, on, w => {
+      w.files.set(ROWS, '{"enabled":false}')
+      w.files.set(PROD, '# producer')
+      w.procs.set(ARGV.join(' '), { exitCode: 0 })
+    })
+    await advance(3 * MIN5)
+    expect(starts(world).length).toBe(0)
+    expect(debugLines(world).filter(t => /sync-status/.test(t))).toEqual([])
+  })
+
+  test('CLAUDE_CONFIG_DIR, when set, is the directory the producer is started from', async ($, on) => {
+    const { world, advance } = await boot($, on, w => {
+      w.files.delete(ROWS)
+      w.env.CLAUDE_CONFIG_DIR = '/opt/cc'
+      w.files.set(PROD_CFG, '# producer')
+      w.procs.set(['python3', '-I', '-B', PROD_CFG, '--print'].join(' '), { exitCode: 0 })
+    })
+    await advance(MIN5)
+    expect(starts(world, ['python3', '-I', '-B', PROD_CFG, '--print'])).toHaveLength(1)
+    expect(starts(world)).toHaveLength(0)
+  })
+
+  test('without CLAUDE_CONFIG_DIR the producer is HOME/.claude/scripts/hooks/sync-status.py', async ($, on) => {
+    const { world, advance } = await boot($, on, w => {
+      w.files.delete(ROWS)
+      w.files.set(PROD, '# producer')
+      w.procs.set(ARGV.join(' '), { exitCode: 0 })
+    })
+    await advance(MIN5)
+    expect(starts(world)).toHaveLength(1)
+  })
+
+  test('an empty CLAUDE_CONFIG_DIR counts as unset, as the hook reads it', async ($, on) => {
+    const { world, advance } = await boot($, on, w => {
+      w.files.delete(ROWS)
+      w.env.CLAUDE_CONFIG_DIR = ''
+      w.files.set(PROD, '# producer')
+      w.procs.set(ARGV.join(' '), { exitCode: 0 })
+    })
+    await advance(MIN5)
+    expect(starts(world)).toHaveLength(1)
+  })
+
+  test('a missing producer file: the reason is logged to the debug log and the cards are the same', async ($, on) => {
+    const { world, advance } = await boot($, on, w => w.files.delete(ROWS))
+    const before = await cards($)
+    await advance(MIN5)
+    expect(await cards($)).toEqual(before)
+    expect(debugLines(world).some(t => /missing/.test(t) && t.includes(PROD))).toBe(true)
+  })
+
+  test('a non-zero exit: the code and the report are logged and the cards are the same', async ($, on) => {
+    const { world, advance } = await boot($, on, w => {
+      w.files.delete(ROWS)
+      w.files.set(PROD, '# producer')
+      w.procs.set(ARGV.join(' '), { exitCode: 1, stdout: 'sync-status: failed\n  error:     git_timeout: slow\n' })
+    })
+    const before = await cards($)
+    await advance(MIN5)
+    expect(debugLines(world).join('\n')).toMatch(/exited 1[\s\S]*git_timeout/)
+    expect(await cards($)).toEqual(before)
+  })
+
+  test('a timeout: the host ends the run with an error, the reason is logged, the cards are the same, and the next interval runs', async ($, on) => {
+    const { world, advance } = await boot($, on, w => {
+      w.files.delete(ROWS)
+      w.files.set(PROD, '# producer')
+      w.delay.set(RUN_KEY(ARGV), 30_000)
+      w.procs.set(ARGV.join(' '), new Error('timed out after 30000 ms'))
+    })
+    const before = await cards($)
+    await advance(MIN5)
+    await advance(30_000)
+    expect(debugLines(world).join('\n')).toMatch(/timed out/)
+    expect(await cards($)).toEqual(before)
+    await advance(MIN5 - 30_000)
+    expect(starts(world)).toHaveLength(2)
+  })
+
+  test('a run longer than the interval: the tick that finds it unfinished is skipped, and the tick after it runs', async ($, on) => {
+    const { world, advance } = await boot($, on, w => {
+      w.files.delete(ROWS)
+      w.files.set(PROD, '# producer')
+      w.delay.set(RUN_KEY(ARGV), 400_000)
+      w.procs.set(ARGV.join(' '), { exitCode: 0 })
+    })
+    await advance(MIN5)
+    await advance(MIN5)
+    expect(starts(world)).toHaveLength(1)
+    expect(debugLines(world).filter(t => /still going/.test(t))).toHaveLength(1)
+    await advance(MIN5)
+    expect(starts(world)).toHaveLength(2)
+  })
+
+  test('a turn that ends on a stale snapshot re-arms the timers, so the period starts again from that turn', async ($, on) => {
+    const { world, advance, clock } = await boot($, on, w => {
+      w.files.delete(ROWS)
+      w.files.set(PROD, '# producer')
+      w.procs.set(ARGV.join(' '), { exitCode: 0 })
+    })
+    await advance(200_000)
+    // the snapshot is older than STALE_MS now: the hooks worker was replaced, and the turn re-arms the timers
+    world.now += 100_000
+    await $.turn.complete(TURN_DONE)
+    await clock.settle()
+    await advance(200_000)
+    // the period armed at boot would have started at 300 s
+    expect(starts(world)).toHaveLength(0)
+    await advance(100_000)
+    expect(starts(world)).toHaveLength(1)
   })
 })
