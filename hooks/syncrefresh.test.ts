@@ -208,6 +208,33 @@ describe('sync refresh: the producer run', () => {
     await r.clock.advance(MIN5)
     expect(r.runs.length).toBe(2)
   })
+
+  test('a host timeout keeps the whole aborted reason; only the first line and the engine prefix are cut', async () => {
+    const r = rig()
+    r.answers.push(() => Promise.reject(new Error('status-pane: $.process.run(python3) aborted: still running after 30000 ms\nsecond line')))
+    startSyncRefresh(r.deps)
+    await r.clock.advance(MIN5)
+    expect(r.logs).toEqual(['sync-status: producer run failed: aborted: still running after 30000 ms'])
+  })
+
+  test('a missing python3 is logged as a failed run, not as a start that never happened', async () => {
+    const r = rig()
+    r.answers.push(() => Promise.reject(new Error('status-pane: $.process.run(python3) spawn python3 ENOENT')))
+    startSyncRefresh(r.deps)
+    await r.clock.advance(MIN5)
+    expect(r.logs).toEqual(['sync-status: producer run failed: spawn python3 ENOENT'])
+    expect(r.logs.join('\n')).not.toMatch(/cannot start/)
+  })
+
+  test('a run error longer than 300 characters is cut at 300, with the ellipsis inside the cut', async () => {
+    const r = rig()
+    r.answers.push(() => Promise.reject(new Error(`status-pane: $.process.run(python3) ${'x'.repeat(400)}`)))
+    startSyncRefresh(r.deps)
+    await r.clock.advance(MIN5)
+    expect(r.logs.length).toBe(1)
+    expect(r.logs[0]?.length).toBe('sync-status: producer run failed: '.length + 300)
+    expect(r.logs[0]?.endsWith('...')).toBe(true)
+  })
 })
 
 describe('sync refresh: where the producer is', () => {
