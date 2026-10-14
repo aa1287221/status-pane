@@ -673,6 +673,19 @@ describe('sync-status: the mod starts the producer every five minutes (#91)', ()
     await advance(100_000)
     expect(starts(world)).toHaveLength(1)
   })
+
+  test('before the first snapshot exists, a producer tick starts nothing and logs nothing (the card check reads no snapshot as off)', async ($, on) => {
+    const { world, advance } = await boot($, on, w => {
+      w.files.delete(ROWS)
+      w.files.set(PROD, '# producer')
+      w.procs.set(ARGV.join(' '), { exitCode: 0 })
+      // a refused write leaves no snapshot, so every read of it finds none
+      w.denyState.add('snap')
+    })
+    await advance(MIN5)
+    expect(starts(world)).toHaveLength(0)
+    expect(debugLines(world).filter(t => /sync-status/.test(t))).toEqual([])
+  })
 })
 
 describe('sync-status: a stale file counts when the last refresh failed (#123)', () => {
