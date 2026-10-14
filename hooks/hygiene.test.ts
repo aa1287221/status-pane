@@ -322,7 +322,8 @@ describe('git-hygiene: card', () => {
 
 describe('git-hygiene: the row through the engine', () => {
   const ROWS = '/root/.claude/cc-statusline-rows.json'
-  const SIDE = '/tmp/claude-side/git-hygiene.json'
+  const LANE_TMP = '/work/example/tmp'
+  const SIDE = `${LANE_TMP}/claude-side/git-hygiene.json`
 
   const drawn = async ($: Parameters<typeof mountPane>[0]) => {
     const ui = await mountPane($, 89)
@@ -335,6 +336,7 @@ describe('git-hygiene: the row through the engine', () => {
   test('on by default: a fresh record draws the HYGIENE card with no error', { timeoutMs: 15_000 }, async ($, on) => {
     await boot($, on, w => {
       w.now = NOW_MS
+      w.env.TMPDIR = LANE_TMP
       w.files.delete(ROWS)
       w.files.set(SIDE, envelope(good(), NOW_SEC - 120))
     })
@@ -346,6 +348,7 @@ describe('git-hygiene: the row through the engine', () => {
   test('on by default and nothing written yet: the card says so, no error counted', { timeoutMs: 15_000 }, async ($, on) => {
     await boot($, on, w => {
       w.now = NOW_MS
+      w.env.TMPDIR = LANE_TMP
       w.files.delete(ROWS)
     })
     const { parts, text } = await drawn($)
@@ -356,6 +359,7 @@ describe('git-hygiene: the row through the engine', () => {
   test('a malformed record counts one error and the rest of the pane still draws', { timeoutMs: 15_000 }, async ($, on) => {
     await boot($, on, w => {
       w.now = NOW_MS
+      w.env.TMPDIR = LANE_TMP
       w.files.delete(ROWS)
       w.files.set(SIDE, envelope(good({ event: 'merge' }), NOW_SEC - 120))
     })
@@ -368,6 +372,7 @@ describe('git-hygiene: the row through the engine', () => {
   test('a failed record counts one error and says the collection failed', { timeoutMs: 15_000 }, async ($, on) => {
     await boot($, on, w => {
       w.now = NOW_MS
+      w.env.TMPDIR = LANE_TMP
       w.files.delete(ROWS)
       w.files.set(SIDE, envelope(null, NOW_SEC - 120, { collection_status: 'failed', error: { code: 'git_timeout', message: 'git timed out' }, last_success_at: null }))
     })
@@ -379,6 +384,7 @@ describe('git-hygiene: the row through the engine', () => {
   test('"hygiene": false hides the card and the file is never read', { timeoutMs: 15_000 }, async ($, on) => {
     const { world } = await boot($, on, w => {
       w.now = NOW_MS
+      w.env.TMPDIR = LANE_TMP
       w.files.set(ROWS, '{"hygiene":false}')
       w.files.set(SIDE, envelope(good(), NOW_SEC - 120))
     })
@@ -387,9 +393,21 @@ describe('git-hygiene: the row through the engine', () => {
     expect(world.reads).not.toContain(SIDE)
   })
 
+  test('the engine world keys the side file under a fabricated TMPDIR, never the live /tmp', { timeoutMs: 15_000 }, async ($, on) => {
+    const { world } = await boot($, on, w => {
+      w.now = NOW_MS
+      w.env.TMPDIR = LANE_TMP
+      w.files.delete(ROWS)
+      w.files.set(SIDE, envelope(good(), NOW_SEC - 120))
+    })
+    expect(world.env.TMPDIR).toBe(LANE_TMP)
+    expect(SIDE.startsWith('/tmp/')).toBe(false)
+  })
+
   test('the hint line is not changed by the card', { timeoutMs: 15_000 }, async ($, on) => {
     await boot($, on, w => {
       w.now = NOW_MS
+      w.env.TMPDIR = LANE_TMP
       w.files.delete(ROWS)
       w.files.set(SIDE, envelope(good(), NOW_SEC - 120))
     })
