@@ -196,7 +196,8 @@ describe('dispatch: the ACTIVITY card at three widths', () => {
 
 describe('dispatch: through the engine', () => {
   for (const { columns, tier } of WIDTHS) {
-    test(`${tier} (${columns} columns): with the threshold 6, fresh entries read plain and seven read over 6`, async ($, on) => {
+    // load 68 in the whole-suite run: 3.5 s (5 s limit); 15 s here, the assertions are unchanged
+    test(`${tier} (${columns} columns): with the threshold 6, fresh entries read plain and seven read over 6`, { timeoutMs: 15_000 }, async ($, on) => {
       const { world, advance } = await boot($, on, w => {
         w.now = T0
         w.env[WARN_ENV] = '6'
@@ -209,7 +210,8 @@ describe('dispatch: through the engine', () => {
     })
   }
 
-  test('unset, empty, zero or junk threshold: no warning, the count is plain', async ($, on) => {
+  // load 68 in the whole-suite run: 3.4 s (5 s limit); 15 s here, the assertions are unchanged
+  test('unset, empty, zero or junk threshold: no warning, the count is plain', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, advance } = await boot($, on, w => {
       w.now = T0
       w.files.set(TRACKER, tracker(...fresh(9)))

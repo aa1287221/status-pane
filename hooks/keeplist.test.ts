@@ -696,7 +696,8 @@ describe('engine: the instructions the summarizer is told', () => {
 
   // 31-10: an auto compaction has no text of its own; the block must not be preceded by a word for nothing
   for (const none of ['absent', 'undefined', 'null'] as const) {
-    test(`auto with instructions ${none}: the block alone, no "undefined", no "null", no leading newline`, async ($, on) => {
+    // load 68 in the whole-suite run: 3.2 s (5 s limit); 15 s here, the assertions are unchanged
+    test(`auto with instructions ${none}: the block alone, no "undefined", no "null", no leading newline`, { timeoutMs: 15_000 }, async ($, on) => {
       const { compact } = await setup($, on, { env: ON, edit: withTasks(1) })
       await compact({ trigger: 'auto', ...(none === 'absent' ? {} : { instructions: none === 'null' ? null : undefined }) } as CompactInput)
       expect(SEEN).toHaveLength(1)

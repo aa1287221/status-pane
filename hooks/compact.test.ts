@@ -179,7 +179,8 @@ const stateOf = (w: { stateValues: Map<string, unknown> }) => w.stateValues.get(
 
 describe('engine: the measure hook', () => {
   // E1: observe is the default; it computes and shows, and calls nothing
-  test('default observe: no suggest call, the state holds what it would send', async ($, on) => {
+  // load 68 in the whole-suite run: 4.6 s (5 s limit); 15 s here, the assertions are unchanged
+  test('default observe: no suggest call, the state holds what it would send', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, measure } = await setup($, on)
     await measure(650_000)
     expect(SENT.length).toBe(0)

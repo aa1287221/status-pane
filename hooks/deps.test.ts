@@ -64,19 +64,22 @@ const expectOnlyCard = (parts: PaneParts, title: string, body: string[], errors 
 }
 
 describe('dependencies: a data source that is missing reads n/a, never idle', () => {
-  test('with every tracker hook wired and the refresher in place the cards are the normal ones', async ($, on) => {
+  // load 68 in the whole-suite run: 3.2 s (5 s limit); 15 s here, the assertions are unchanged
+  test('with every tracker hook wired and the refresher in place the cards are the normal ones', { timeoutMs: 15_000 }, async ($, on) => {
     const { world } = await boot($, on)
     expectNormal(await paneView($))
     expect(world.settingsCalls).toBeGreaterThan(0)
   })
 
-  test('the effort tracker is no dependency: without it nothing changes', async ($, on) => {
+  // load 68 in the whole-suite run: 2.7 s (5 s limit); 15 s here, the assertions are unchanged
+  test('the effort tracker is no dependency: without it nothing changes', { timeoutMs: 15_000 }, async ($, on) => {
     const { world } = await boot($, on, w => unwire(w, 'effort-tracker.js'))
     expectNormal(await paneView($))
     expect(world.settingsCalls).toBeGreaterThan(0)
   })
 
-  test('subagent-tracker.js missing: the agents part of ACTIVITY says so and counts one error, nothing else changes', async ($, on) => {
+  // load 68 in the whole-suite run: 2.7 s (5 s limit); 15 s here, the assertions are unchanged
+  test('subagent-tracker.js missing: the agents part of ACTIVITY says so and counts one error, nothing else changes', { timeoutMs: 15_000 }, async ($, on) => {
     await boot($, on, w => unwire(w, 'subagent-tracker.js'))
     expectOnlyCard(await paneView($), 'ACTIVITY', [
       'in-flight',

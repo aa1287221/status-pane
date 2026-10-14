@@ -48,7 +48,8 @@ describe('the kit mounts the pane on every surface at the three breakpoints', ()
   // one boot and two mounts per test: a mount costs about 0.15 s, so the four surfaces are split in two
   for (const { columns, name, cards } of BREAKPOINTS) {
     for (const [half, surfaces] of [['terminal and desktop', SURFACES.slice(0, 2)], ['vscode and mobile', SURFACES.slice(2)]] as const) {
-      test(`bodyColumns ${columns} (${name}), ${half}: the tree validates and holds the cards of that breakpoint`, async ($, on) => {
+      // load 68 in the whole-suite run: 3.8 s (5 s limit); 15 s here, the assertions are unchanged
+      test(`bodyColumns ${columns} (${name}), ${half}: the tree validates and holds the cards of that breakpoint`, { timeoutMs: 15_000 }, async ($, on) => {
         await boot($, on)
         for (const surface of surfaces) {
           // the mount resolves only when the surface's table accepts every element and prop of the tree
@@ -333,7 +334,8 @@ describe('no Text passes its box at any width from 20 to 120, through the kit', 
     await sweep($, 59, 77)
   })
 
-  test('a healthy session, widths 78 to 96', async ($, on) => {
+  // load 68 in the whole-suite run: 2.6 s (5 s limit); 15 s here, the assertions are unchanged
+  test('a healthy session, widths 78 to 96', { timeoutMs: 15_000 }, async ($, on) => {
     await boot($, on)
     await sweep($, 78, 96)
   })

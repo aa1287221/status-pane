@@ -93,7 +93,8 @@ describe('session.start', () => {
 })
 
 describe('#10 pane through the engine', () => {
-  test('the first refresh fills every card, on every surface, wide and medium', async ($, on) => {
+  // load 68 in the whole-suite run: 4.6 s (5 s limit); 15 s here, the assertions are unchanged
+  test('the first refresh fills every card, on every surface, wide and medium', { timeoutMs: 15_000 }, async ($, on) => {
     await boot($, on)
 
     for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {

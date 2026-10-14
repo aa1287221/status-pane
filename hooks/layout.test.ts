@@ -1661,7 +1661,8 @@ describe('no line passes its box at any width from 20 to 120', () => {
     ['one with very long text and big numbers', NASTY],
   ] as const) {
     for (const raster of [true, false]) {
-      test(`${name}, ${raster ? 'with' : 'without'} Rasters`, () => {
+      // load 68 in the whole-suite run: 2.5 s (5 s limit); 15 s here, the assertions are unchanged
+      test(`${name}, ${raster ? 'with' : 'without'} Rasters`, { timeoutMs: 15_000 }, () => {
         for (let columns = MIN_W + 2; columns <= 122; columns++) {
           const tree = treeAt(snap, columns, { raster })
           expect(findOverflow(tree, columns)).toEqual([])
@@ -2091,7 +2092,8 @@ describe('the narrowest panes in a directory that is no repository', () => {
     expect(dim.props).toMatchObject({ dimColor: true })
   })
 
-  test('the header breaks only between segments, so no row starts or ends with the separator, at any width from 20 to 60', () => {
+  // load 68 in the whole-suite run: 4.0 s (5 s limit); 15 s here, the assertions are unchanged
+  test('the header breaks only between segments, so no row starts or ends with the separator, at any width from 20 to 60', { timeoutMs: 15_000 }, () => {
     const models = [
       { name: 'Opus 5.5', version: '2.1.295', effort: 'xhigh' },
       { name: 'Opus 5.5 [1m]', version: '2.1.295', effort: 'medium' },
@@ -2440,7 +2442,8 @@ describe('cards are framed at every width, in every room', () => {
     }
   }
   test('never borderless from 22 to 58 columns and any room from 5 to 60 rows', () => framedSweep(MIN_W + 2, 58))
-  test('never borderless from 61 to 97 columns and any room from 5 to 60 rows', () => framedSweep(61, 97))
+  // load 68 in the whole-suite run: 2.5 s (5 s limit); 15 s here, the assertions are unchanged
+  test('never borderless from 61 to 97 columns and any room from 5 to 60 rows', { timeoutMs: 15_000 }, () => framedSweep(61, 97))
   test('never borderless from 100 to 122 columns and any room from 5 to 60 rows', () => framedSweep(100, 122))
 
   test('the narrow tier leaves one blank row between its cards, and the medium and wide tiers none', () => {

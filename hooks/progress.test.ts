@@ -204,7 +204,8 @@ describe('through the engine: tool.call bookkeeping, the pane and /progress', ()
     await clock.settle()
   }
 
-  test('/progress is registered next to /status-pane, with immediate: true', async ($, on) => {
+  // load 68 in the whole-suite run: 3.0 s (5 s limit); 15 s here, the assertions are unchanged
+  test('/progress is registered next to /status-pane, with immediate: true', { timeoutMs: 15_000 }, async ($, on) => {
     const { world } = await boot($, on)
     expect(world.registered).toEqual(['status-pane', 'progress', 'keeplist'])
     expect(world.commandSpecs.find(s => s.name === 'progress')).toMatchObject({ name: 'progress', immediate: true })
@@ -222,7 +223,8 @@ describe('through the engine: tool.call bookkeeping, the pane and /progress', ()
   })
 
   for (const { columns, tier } of WIDTHS) {
-    test(`${tier} (bodyColumns ${columns}): a tool in flight shows with its elapsed time, follows the clock, and is gone when it ends`, async ($, on) => {
+    // load 68 in the whole-suite run: 3.1 s (5 s limit); 15 s here, the assertions are unchanged
+    test(`${tier} (bodyColumns ${columns}): a tool in flight shows with its elapsed time, follows the clock, and is gone when it ends`, { timeoutMs: 15_000 }, async ($, on) => {
       const { world, clock } = await boot($, on, w => (w.now = T0))
       const gate = hold(world)
       const calling = $.tool.call({ tool: 'Bash', command: 'sleep 60' })

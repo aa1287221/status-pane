@@ -264,7 +264,8 @@ describe('sync-status: the card at every width from 22 to 122', () => {
   const HALVES: [number, number][] = [[FIRST, 72], [73, LAST]]
   for (const [name, v, head] of OK) {
     for (const [lo, hi] of HALVES) {
-      test(`${name}, widths ${lo} to ${hi}: nothing passes its room, every frame is whole, the headline and the six rows are there`, () => {
+      // load 68 in the whole-suite run: 2.8 s (5 s limit); 15 s here, the assertions are unchanged
+      test(`${name}, widths ${lo} to ${hi}: nothing passes its room, every frame is whole, the headline and the six rows are there`, { timeoutMs: 15_000 }, () => {
         for (let columns = lo; columns <= hi; columns++) {
           const at = `${name} at bodyColumns ${columns}`
           const card = holds(makeSnap({ sync: { ok: true, v } }), columns, at)
@@ -553,9 +554,11 @@ describe('sync-status: the mod starts the producer every five minutes (#91)', ()
     return { sync: cardOf(parts, 'SYNC').body.join('|'), errors: cardOf(parts, 'SYSTEM').body.at(-1) }
   }
 
-  test('on by default the first start is one interval after the mod starts, then one per interval, bounded at 30 s', async ($, on) => {
+  // load 68 in the whole-suite run: 4.0 s (5 s limit); 15 s here, the assertions are unchanged
+  test('on by default the first start is one interval after the mod starts, then one per interval, bounded at 30 s', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, advance, clock } = await boot($, on, w => {
-      w.files.set(ROWS, QUIET_ROWS())
+      // no rows file at all: the default must start the producer (QUIET_ROWS would hide a rows-file gate)
+      w.files.delete(ROWS)
       w.files.set(PROD, '# producer')
       w.procs.set(ARGV.join(' '), { exitCode: 0 })
     })
@@ -569,7 +572,8 @@ describe('sync-status: the mod starts the producer every five minutes (#91)', ()
     expect(starts(world).length).toBe(2)
   })
 
-  test('"sync": false: the producer is never started, however long the mod runs', async ($, on) => {
+  // load 68 in the whole-suite run: 4.1 s (5 s limit); 15 s here, the assertions are unchanged
+  test('"sync": false: the producer is never started, however long the mod runs', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, clock } = await boot($, on, w => {
       w.files.set(ROWS, QUIET_ROWS({ sync: false }))
       w.files.set(PROD, '# producer')
@@ -660,7 +664,8 @@ describe('sync-status: the mod starts the producer every five minutes (#91)', ()
     expect(starts(world)).toHaveLength(2)
   })
 
-  test('a run longer than the interval: the tick that finds it unfinished is skipped, and the tick after it runs', async ($, on) => {
+  // load 68 in the whole-suite run: 2.6 s (5 s limit); 15 s here, the assertions are unchanged
+  test('a run longer than the interval: the tick that finds it unfinished is skipped, and the tick after it runs', { timeoutMs: 15_000 }, async ($, on) => {
     // only SYNC is on: the skip rule reads that row alone, and the other rows would repaint on every 30 s refresh
     const { world, clock } = await boot($, on, w => {
       w.files.set(ROWS, JSON.stringify({ enabled: true, ...Object.fromEntries(ROW_KEYS.filter(k => k !== 'sync').map(k => [k, false])), sync: true }))
@@ -886,7 +891,8 @@ describe('sync-status: a stale file counts when the last refresh failed (#123)',
     await expectRow($, /^n\/a（過期/, 1)
   })
 
-  test('matrix: card off is no attempt and counts nothing; the outcome from before it stands once the card is back', async ($, on) => {
+  // load 68 in the whole-suite run: 3.2 s (5 s limit); 15 s here, the assertions are unchanged
+  test('matrix: card off is no attempt and counts nothing; the outcome from before it stands once the card is back', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, clock } = await modAt($, on, AGED_MS, behind, { exitCode: 2 })
     await coarse(world, clock, MIN5)
     await expectRow($, /^n\/a（過期/, 1)
@@ -910,7 +916,8 @@ describe('sync-status: a stale file counts when the last refresh failed (#123)',
   })
 
   // a start the card or the master switch turns away is no attempt: it must not pin a failure from before the first finished run
-  test('matrix: card off at boot and the first tick is no attempt, the card back on before any finished run: not counted', async ($, on) => {
+  // load 68 in the whole-suite run: 4.2 s (5 s limit); 15 s here, the assertions are unchanged
+  test('matrix: card off at boot and the first tick is no attempt, the card back on before any finished run: not counted', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, clock } = await modAt($, on, AGED_MS, behind, { exitCode: 2 }, w => {
       w.files.set(ROWS, '{"sync":false}')
     })

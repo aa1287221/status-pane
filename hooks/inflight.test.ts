@@ -482,7 +482,8 @@ describe('through the engine: Stop snapshot, tool.call starts and notifications'
   })
 
   for (const { columns, tier } of WIDTHS) {
-    test(`${tier} (bodyColumns ${columns}): a background shell started this turn waits from its call, and is gone when its notification comes`, async ($, on) => {
+    // load 68 in the whole-suite run: 3.8 s (5 s limit); 15 s here, the assertions are unchanged
+    test(`${tier} (bodyColumns ${columns}): a background shell started this turn waits from its call, and is gone when its notification comes`, { timeoutMs: 15_000 }, async ($, on) => {
       const { world, clock } = await boot($, on, w => (w.now = T0))
       const inner = columns - 2 - 4
       await $.tool.call({ tool: 'Bash', command: 'sleep 600', run_in_background: true })

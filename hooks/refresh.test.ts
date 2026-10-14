@@ -74,7 +74,8 @@ const tmpFiles = (world: World) => [...world.files.keys()].filter(k => k.endsWit
 const kicks = (world: World) => world.ran.filter(r => r.argv.join(' ') === REFRESHER.join(' ')).length
 
 describe('the cum file', () => {
-  test('the first refresh steps every counter from the existing file and writes it back byte-compatible', async ($, on) => {
+  // load 68 in the whole-suite run: 4.4 s (5 s limit); 15 s here, the assertions are unchanged
+  test('the first refresh steps every counter from the existing file and writes it back byte-compatible', { timeoutMs: 15_000 }, async ($, on) => {
     const { world } = await boot($, on)
 
     expect(world.files.get(CUM_FILE)).toBe(
@@ -83,7 +84,8 @@ describe('the cum file', () => {
     )
   })
 
-  test('a later refresh adds only the growth; a drop re-baselines without touching the total', async ($, on) => {
+  // load 68 in the whole-suite run: 5.0 s (5 s limit); 15 s here, the assertions are unchanged
+  test('a later refresh adds only the growth; a drop re-baselines without touching the total', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, advance, clock } = await boot($, on)
 
     setUsage(world, { cost: { usd: 5 }, context: { tokens: 40_000, window: 1_000_000, percent: 4 } })
