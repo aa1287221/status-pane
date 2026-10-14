@@ -301,10 +301,12 @@ describe('completeness through the kit: every field of the old pane is in the tr
 describe('no Text passes its box at any width from 20 to 120, through the kit', () => {
   const FIRST = 22
   const LAST = 122
+  type On = Parameters<typeof boot>[1]
 
-  const sweep = async ($: Engine) => {
+  // one sweep per test nears the 5 s per-test limit under load, so each scenario is cut in three
+  const sweep = async ($: Engine, from: number, to: number) => {
     for (const surface of ['terminal', 'desktop'] as const) {
-      for (let columns = FIRST; columns <= LAST; columns++) {
+      for (let columns = from; columns <= to; columns++) {
         const ui = await mountPane($, columns, surface)
         const problems = findOverflow((await ui.drawn()) as Node, columns)
         await ui.unmount()
@@ -313,12 +315,22 @@ describe('no Text passes its box at any width from 20 to 120, through the kit', 
     }
   }
 
-  test('a healthy session', async ($, on) => {
+  test('a healthy session, widths 22 to 58', async ($, on) => {
     await boot($, on)
-    await sweep($)
+    await sweep($, FIRST, 58)
   })
 
-  test('a session with long text, wide characters and a failure behind every card', async ($, on) => {
+  test('a healthy session, widths 59 to 96', async ($, on) => {
+    await boot($, on)
+    await sweep($, 59, 96)
+  })
+
+  test('a healthy session, widths 97 to 122', async ($, on) => {
+    await boot($, on)
+    await sweep($, 97, LAST)
+  })
+
+  const longText = async ($: Engine, on: On, from: number, to: number) => {
     await boot($, on, (w: World) => {
       w.files.set(`/tmp/claude-summary-${SID}.txt`, '遷移'.repeat(60))
       w.session.cwd = '/very/long/path/that/goes/on/and/on/and/on/to/QCIDiag/S8P_host_GB300/目錄/目錄'
@@ -327,6 +339,9 @@ describe('no Text passes its box at any width from 20 to 120, through the kit', 
       w.files.delete('/proc/meminfo')
       w.usage = new Error('usage refused by a very long and wordy reason that runs on')
     })
-    await sweep($)
-  })
+    await sweep($, from, to)
+  }
+  test('a session with long text, wide characters and a failure behind every card, widths 22 to 58', async ($, on) => longText($, on, FIRST, 58))
+  test('a session with long text, wide characters and a failure behind every card, widths 59 to 96', async ($, on) => longText($, on, 59, 96))
+  test('a session with long text, wide characters and a failure behind every card, widths 97 to 122', async ($, on) => longText($, on, 97, LAST))
 })
