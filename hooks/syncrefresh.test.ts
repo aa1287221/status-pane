@@ -268,6 +268,16 @@ describe('sync refresh: the producer run', () => {
     expect(r.logs[0]?.length).toBe('sync-status: producer run failed: '.length + 300)
     expect(r.logs[0]?.endsWith('...')).toBe(true)
   })
+
+  test('a run error with no message, or only the engine prefix, is logged as (no message)', async () => {
+    for (const err of [new Error(''), new Error('status-pane: $.process.run(python3) ')]) {
+      const r = rig()
+      r.answers.push(() => Promise.reject(err))
+      startSyncRefresh(r.deps, idle())
+      await r.clock.advance(MIN5)
+      expect(r.logs).toEqual(['sync-status: producer run failed: (no message)'])
+    }
+  })
 })
 
 describe('sync refresh: where the producer is', () => {
@@ -310,6 +320,16 @@ describe('sync refresh: the outcome of the last finished refresh (#123)', () => 
     const r = rig()
     const state = idle()
     startSyncRefresh(r.deps, state)
+    expect(failedOf(state)).toBe(false)
+  })
+
+  test('card off from a clean start: nothing starts and the outcome stays not failed', async () => {
+    const r = rig()
+    const state = idle()
+    r.knobs.wanted = false
+    startSyncRefresh(r.deps, state)
+    await r.clock.advance(MIN5 + 1)
+    expect(r.runs.length).toBe(0)
     expect(failedOf(state)).toBe(false)
   })
 
