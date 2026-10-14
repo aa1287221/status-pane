@@ -152,6 +152,13 @@ describe('git-hygiene: reader mapping (data rules v2, SCHEMA git-hygiene)', () =
     expect(!v.ok && v.why).toMatch(/data\.entries\[0\]\.first_line/)
   })
 
+  test('a first line with U+2028 or U+2029 is malformed as a control character', async () => {
+    for (const sep of ['\u2028', '\u2029']) {
+      const v = await mapped(good({ first_line: `NOT${sep}RECORDED` }))
+      expect(!v.ok && v.why).toMatch(/data\.entries\[0\]\.first_line 含控制字元/)
+    }
+  })
+
   test('13 lines is malformed, 12 is not, and an empty lines array is malformed', async () => {
     const lines = (n: number) => Array.from({ length: n }, (_, i) => `line ${i}`)
     expect((await mapped(good({ lines: lines(13) }))).ok).toBe(false)
@@ -190,7 +197,7 @@ describe('git-hygiene: reader mapping (data rules v2, SCHEMA git-hygiene)', () =
   })
 
   test('a source that is neither main nor subtask is malformed', async () => {
-    const v = await mapped(good({ source: 'agent' }))
+    const v = await mapped(good({ source: 'other' }))
     expect(!v.ok && v.why).toMatch(/data\.entries\[0\]\.source/)
   })
 
