@@ -247,6 +247,11 @@ a run of 2.1.296, specified = the type file or the settings schema, inferred = r
   just read, the variable and the session's model) for the card; the measure works it out afresh (five settings reads, the
   variable, the model) so that a `/model` or a settings edit since the last refresh is not missed. Any input that cannot
   be had leaves the model's window.
+  **Known gap**: `readSources` gives null when any one settings source cannot be read (`collect.ts` L394-400). The measure
+  (`register.tsx` L382) then counts no settings, and so does `refresh()` (`collect.ts` L522) when its settings read is not ok.
+  The base is then the variable's window if set, else the model's own (`effectiveWindow`, `compact.ts` L143-153). Where the
+  engine's window is smaller, the line comes later than the engine's auto-compaction, and nothing on the card says so
+  (hub #127; status-pane#6 comment 6124458095).
 - **Trigger**: `session.measure` fires once per main-loop turn (observed, #9); acts only when `changed`
   includes `context`. Usage is re-read per response (inferred only, #9 correction).
 - **Mode** from `STATUS_PANE_CTX_SUGGEST` (specified): unset or other = `observe` (computes, records
@@ -255,8 +260,13 @@ a run of 2.1.296, specified = the type file or the settings schema, inferred = r
 - **Once per crossing**: fires when the fill rises over the line; a drop under it re-arms (what a /compact
   does); a new session id starts over. An answer of `isShown: false`, or a refusal, re-arms too, so the
   next measure tries again. One call in flight; a 3 s guard releases the flag if the box never settles.
-- **`isShown`** (partially-supported, #9): the call is accepted (observed, headless); whether the grey text
-  shows in a live TUI is NOT observed. The card prints it: `on · shown`, `on · not shown`, `on · pending`.
+  A session already over the line when the mode changes from `observe` to `suggest` gets nothing until the fill drops under
+  the line and crosses again: `shouldSuggest` (`compact.ts` L36-43) sets `armed: false` in `observe` too, and `noteMeasure`
+  stores that state in every mode (`register.tsx` L383-391). No case in `compact.test.ts` covers this switch.
+- **`isShown`** (partially-supported, #9): the call is accepted (observed, headless, where `isShown` is false: there
+  is no box). A live TUI was NOT observed until 2026-10-14: the owner's check on WKY (hub #30, comment 6153913284, items
+  a-d PASS) saw the grey text in the empty box, Tab took it into the box, and the card read `on · shown`. The card prints
+  it: `on · shown`, `on · not shown`, `on · pending`.
 - **Gates**: rows file `enabled:false`, the `usage` row off, or no snapshot: nothing is computed or written.
   Every error inside the hook is swallowed; the hook returns `next(e)` untouched (fail-open).
 
@@ -325,6 +335,10 @@ What it does:
   `observe` records `would: rewrite`. `next` is called once on every path but the skip, with the event as it came plus
   `instructions`, so `trigger`, `agentId` and `messages` are the engine's. A failure of `next` is the engine's: it is
   passed on and never retried.
+  The precompute check comes before `hasKeep` (`keeplist.ts` L220-221): in `on` mode an empty list still gets `{ skip }`, and
+  no source is read for it (`register.tsx` L521 asks with `hasKeep: true` first). The code gives no reason for this order
+  (its comment, L211-212, says only that a skip needs no sources), and no commit records one. It is current behaviour; the
+  trade-off is the summarizer's latency at the real compaction, as in the precompute bullet below.
 - **Precompute** (the ticket's acceptance item) is skipped by default: the engine keeps a precomputed summary for the
   next compaction, and with instructions-only injection a summary made now would carry no list, or one that is stale
   by the time it is used. The cost is the summarizer's whole latency at the real compaction (not measured; none if a
@@ -378,7 +392,7 @@ What it does:
 - **Gaps recorded**: the task list of a team or a resumed list; a restarted or resumed session (a new process) starts with no
   record of the files it wrote or the handoffs it read before (`$.state` was not restored into a later process in the probe); files made by `Bash`; append-to-messages (observed to
   work in `-p`, hub #10) is not in v1, it is the fallback if the TUI check shows the summarizer ignoring the
-  instructions; task subjects are the person's own words and reach the summarizer as one cleaned line, not redacted;
+  instructions; task subjects are the person's own words and reach the summarizer as one cleaned line, not redacted (decided 2026-10-14, hub #127: masking waits for hub #24's mask mode, tracked in hub #119; no code change until then);
   the engine skips a hook that throws (observed in the test kit), so the catch in this one is a choice, not a need.
 
 ### Dispatch count (in-flight, #32)
@@ -1025,7 +1039,7 @@ Card     Box width round gray paddingX=1 column               (Section: Box widt
 | 31-28 | engine: the record at a compaction | it outlives the compaction and grows (A, B, then C: C, B, A); another session id starts over; a file that is gone is left out and counted, one whose check is refused stays; the newest 10 are listed; handoffs come before files, once, and are checked like them |
 | 31-29 | the card | the `keep` row after the hint at 36, 49 and 89 columns, whole (`keep observe · manual · 3 tasks 4 files 1 handoff`, `keep on · auto · injected 412 chars`, `keep on · precompute skipped`), its word dim and its value not; no state, the mode off or an n/a card: no row; no overflow from 22 to 120 columns; through the engine the pane shows it after a compaction and not before, and not for another session's state |
 | 31-30 | `/keeplist` | registered after the others with `immediate: true`; before any compaction it says so and names the switches; after one it prints the switches, the sightings, the decision, each source and the block; another session's state is none; a refused state read is `keeplist n/a (reason)`; no file read, no listing, no `usage()` |
-| 31-31 | guard: the old suites | `claude plugin test .` on `t30-context-card` at 00e6870 (it holds main 14487a7 with the SYNC card): 1045 pass, 0 fail, 13 files. Here 1299 pass, 0 fail, 17 files (1045 + 129 new rows in `keeplist.test.ts`: 54 pure, 63 engine, 12 card, + 44 in `dispatch.test.ts`, #32, + 81 for the WAITING card, #28: `waiting.test.ts` 45, `waitingcard.test.ts` 35, `model.test.ts` 1); every old one is unchanged and green except the two lists of registered commands (`pane.test.ts` `session.start`, `progress.test.ts` `/progress is registered`), which now end with `keeplist`. `claude plugin validate .` passes |
+| 31-31 | guard: the old suites | `claude plugin test .` on `t30-context-card` at 00e6870 (it holds main 14487a7 with the SYNC card): 1045 pass, 0 fail, 13 files. Here, at 192ac64 (run 2026-10-14): 1326 pass, 0 fail, 18 files. The 1299 and 17 figures in this row predate #91 (`syncrefresh.test.ts`, 16 tests here) and are not re-derived. Earlier breakdown (1045 + 129 new rows in `keeplist.test.ts`: 54 pure, 63 engine, 12 card, + 44 in `dispatch.test.ts`, #32, + 81 for the WAITING card, #28: `waiting.test.ts` 45, `waitingcard.test.ts` 35, `model.test.ts` 1); every old one is unchanged and green except the two lists of registered commands (`pane.test.ts` `session.start`, `progress.test.ts` `/progress is registered`), which now end with `keeplist`. `claude plugin validate .` passes |
 | 31-32 | guard: secrets | no added line looks like a credential, and no fixture builds one |
 | 31-33 | which task files | `pickTaskFiles`: only `<id>.json`; the newest ids first (10 before 9), a name that is not a number last; 200 at most with the rest counted; the listing untouched |
 | 31-34 | the task directory | `taskDirOf`: `CLAUDE_CONFIG_DIR` over `HOME`, trailing slashes dropped, the full session id with its dashes, `CLAUDE_CODE_TASK_LIST_ID` over it with every character outside `[A-Za-z0-9_-]` a dash (`../../etc` is `------etc`, an emoji is two), empty values fall through, no base or no id is a reason |
@@ -1065,6 +1079,8 @@ Card     Box width round gray paddingX=1 column               (Section: Box widt
   feature stays hint-text-only and the default stays observe. With `modelSettings.claude-opus-5-5.autoCompactWindow`
   = 400000 the CONTEXT card also reads `達 60% (240.0K) 建議 /compact` under the line and `△ 已達 60% (240.0K) · 建議
   /compact` from 240K tokens on, while its title percentage stays a share of the model's 1.0M.
+  Result, 2026-10-14 (owner, WKY `192ac643`; hub #30, comment 6153913284): items a-d PASS. The four are the threshold hint
+  on the card, the grey `/compact` text in the empty box, Tab taking it into the box, and the `suggest` line reading `on · shown`.
 - Probe of the #30 line through the real engine (2.1.296; a scratch config dir, a loopback stub API that answers with
   chosen usage figures, this branch loaded beside a recorder of `prompt.suggest`; not part of the suite). With
   `STATUS_PANE_CTX_SUGGEST=1` the suggestion goes out of `session.measure` exactly at the line and not a token before:
@@ -1081,9 +1097,16 @@ Card     Box width round gray paddingX=1 column               (Section: Box widt
      did you write files?". PASS: the answer names both; compare with `STATUS_PANE_KEEP=0`. FAIL (the summarizer ignores
      the instructions): record it on #31 and open the append-to-messages follow-up (observed to work in `-p`, hub #10);
      the default stays observe.
-  3. TUI-3: leave a long session in observe and read `seen.precompute` in `/keeplist`. 0 after real auto-compactions means
-     a precompute is never dispatched there and the skip default costs nothing; more than 0 says how often, and the
-     latency of the compaction that follows is what the skip costs.
+     Result, 2026-10-14 (owner, WKY `192ac643`; hub #31, comment 6153914160). TUI-1: met the conditions; both compactions'
+     PreCompact input had `custom_instructions` null, as observe leaves the event unchanged. TUI-2: PASS for the hook input and
+     the answer: the PreCompact input carried the keep list (2 tasks, 1 file path), the summary kept those lines verbatim, and
+     the later answer, which used no tool, named both tasks and the path. The last `/keeplist` row and the card's `keep` row
+     were not copied in here. No control run without the list was made, so the answer alone has no discriminating power.
+  3. TUI-3 (open, not yet observed): leave a long session in observe and read `seen.precompute` in `/keeplist`. Record the
+     observation window, the number of real auto-compactions in it, and `seen.precompute`. 0 means no precompute was
+     dispatched in that window, not that none ever will be; more than 0 says how often, and the latency of the compaction
+     that follows is what the skip costs. Both compactions of 2026-10-14 were manual, so the precompute path was not reached
+     (hub #127).
   The owner flips `STATUS_PANE_KEEP=1` (new sessions) after TUI-1 and TUI-2 pass and a few real compactions in observe
   showed a sensible would-be text with no problems; `STATUS_PANE_KEEP_PRECOMPUTE=rewrite` only if TUI-3 shows a precompute
   and the skip costs too much.
