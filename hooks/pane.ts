@@ -30,6 +30,7 @@ import type { CompactState, KeepState } from './state'
 import { ageText } from './sidefile'
 import { waitingHead, waitingView } from './waiting'
 import { SYNC_FETCH_OLD_SEC, syncHead } from './sync'
+import { HYGIENE_MISSING, HYGIENE_STALE_SEC } from './hygiene'
 import type { AgentGroup, Dispatch, InflightState, NowState, Res, Snap } from './state'
 
 export type Seg = { text: string; color?: string; dim?: boolean; bold?: boolean }
@@ -51,7 +52,7 @@ export type PaneView = {
   keep?: KeepState | null
 }
 
-export type CardId = 'header' | 'context' | '5h' | '7d' | 'cost' | 'git' | 'activity' | 'waiting' | 'system' | 'progress' | 'sync' | 'fixture' | 'status'
+export type CardId = 'header' | 'context' | '5h' | '7d' | 'cost' | 'git' | 'activity' | 'waiting' | 'system' | 'progress' | 'sync' | 'fixture' | 'hygiene' | 'status'
 
 /** A body row: a label/value split, a left-packed line, a gauge (`null` is the bare track), or the CPU chart row. */
 export type CardRow =
@@ -609,6 +610,27 @@ const syncCard = (snap: Snap, width: number, inner: number, c: Ctx): Card => {
   }
 }
 
+/** The GIT HYGIENE card: the last warning the commit or push hook recorded, its age (舊 past 30 minutes), the event, the repo and the first line. */
+const hygieneCard = (snap: Snap, width: number, inner: number): Card => {
+  const r = snap.hygiene
+  if (!r) return { id: 'hygiene', width, rows: [titleRow('HYGIENE', null, inner)] }
+  if (!r.ok && r.why === HYGIENE_MISSING) return { id: 'hygiene', width, rows: [titleRow('HYGIENE', null, inner), ...kv('state', [dim('還沒有警告紀錄')], inner)] }
+  if (!r.ok) return { id: 'hygiene', width, rows: [titleRow('HYGIENE', null, inner), ...naRows(r.why, inner)] }
+  const v = r.v
+  const age = ageText(v.ageSec)
+  const value = v.ageSec > HYGIENE_STALE_SEC ? seg(`舊 ${age}`, { color: PALETTE.yellow }) : plain(age)
+  // a label on its own row, its text wrapped under it: a label beside a full-width text would overflow the card
+  const block = (label: string, t: string): CardRow[] => [
+    { kind: 'split', parts: [[dim(label)]] },
+    ...wrapWords(t.replace(BIDI_RE, ''), inner).map((line): CardRow => ({ kind: 'text', line: [plain(line)] })),
+  ]
+  return {
+    id: 'hygiene',
+    width,
+    rows: [titleRow('HYGIENE', value, inner), ...kv('event', [plain(v.event)], inner), ...block('repo', v.repo), ...block('warning', v.firstLine)],
+  }
+}
+
 /** The demo card of the side file path: the count the file holds, its age at this draw and when it was observed. */
 const fixtureCard = (snap: Snap, width: number, inner: number, c: Ctx): Card => {
   const r = snap.fixture
@@ -1032,14 +1054,15 @@ export const paneLayout = (snap: Snap | null, view: PaneView): Layout => {
       progress: on.progress && c.progress !== null,
       sync: snap.sync !== undefined,
       fixture: snap.fixture !== undefined,
+      hygiene: on.hygiene && snap.hygiene !== undefined,
       waiting: on.waiting && snap.waiting !== undefined,
     }
     const bands: BandId[][] =
       tier === 'narrow'
-        ? [['progress'], ['context'], ['5h'], ['7d'], ['cost'], ['git'], ['activity'], ['waiting'], ['system'], ['sync'], ['fixture']]
+        ? [['progress'], ['context'], ['5h'], ['7d'], ['cost'], ['git'], ['activity'], ['waiting'], ['hygiene'], ['system'], ['sync'], ['fixture']]
         : tier === 'medium'
-          ? [['progress'], ['context'], ['5h', '7d'], ['cost', 'git'], ['activity'], ['waiting'], ['system'], ['sync'], ['fixture']]
-          : [['progress'], ['context', '5h', '7d'], ['cost', 'git', 'activity'], ['waiting'], ['system'], ['sync'], ['fixture']]
+          ? [['progress'], ['context'], ['5h', '7d'], ['cost', 'git'], ['activity'], ['waiting'], ['hygiene'], ['system'], ['sync'], ['fixture']]
+          : [['progress'], ['context', '5h', '7d'], ['cost', 'git', 'activity'], ['waiting'], ['hygiene'], ['system'], ['sync'], ['fixture']]
     const build = (id: BandId, width: number): Card => {
       const inner = innerOf(width)
       if (id === 'context') return contextCard(snap, width, inner, view.compact ?? null, view.keep ?? null)
@@ -1051,6 +1074,7 @@ export const paneLayout = (snap: Snap | null, view: PaneView): Layout => {
       if (id === 'sync') return syncCard(snap, width, inner, c)
       if (id === 'fixture') return fixtureCard(snap, width, inner, c)
       if (id === 'waiting') return waitingCard(snap, width, inner, c)
+      if (id === 'hygiene') return hygieneCard(snap, width, inner)
       return systemCard(snap, width, inner, c, true)
     }
     const blocks: Block[] = [{ kind: 'cards', gap: 1, cards: [headerCard(snap, c)] }]

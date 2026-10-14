@@ -83,6 +83,7 @@ export const makeSnap = (over: Partial<Snap> = {}): Snap => ({
       progress: true,
       fixture: false,
       waiting: true,
+      hygiene: true,
     },
   },
   summary: ok('遷移 statusline 到 mod pane 的討論與實作'),
@@ -284,19 +285,19 @@ export const NOW_SEC = Math.floor(MOCKUP_AT / 1000)
 
 const iso = (sec: number) => new Date(sec * 1000).toISOString()
 
-/** The rows file text with the SYNC row pinned off; the row is on by default, so tests about other rows pin it. */
-export const pinSyncOff = (rows: string): string => JSON.stringify({ ...JSON.parse(rows), sync: false })
+/** The rows file text with the SYNC and GIT HYGIENE rows pinned off; both are on by default, so tests about other rows pin them. */
+export const pinSyncOff = (rows: string): string => JSON.stringify({ ...JSON.parse(rows), sync: false, hygiene: false })
 
 /**
  * A healthy session: every row of the SPEC mockup has data, and nothing is on disk that should not be, bar one file. Unlike a real machine
- * it has a rows file, `{"waiting":false,"sync":false}` (WAITING and SYNC are on by default and would each add a card to every pane);
+ * it has a rows file, `{"waiting":false,"sync":false,"hygiene":false}` (WAITING, SYNC and GIT HYGIENE are on by default and would each add a card to every pane);
  * the WAITING and SYNC tests overwrite or delete it.
  */
 export const makeWorld = (): World => {
   const files = new Map<string, string>()
   const put = (path: string, text: string) => files.set(path, text)
-  // SYNC and WAITING have their own tests (sync.test.ts, waitingcard.test.ts); both rows are off here so the cards and error counts stay as they were
-  put('/root/.claude/cc-statusline-rows.json', pinSyncOff('{"waiting":false}'))
+  // SYNC, WAITING and GIT HYGIENE have their own tests (sync.test.ts, waitingcard.test.ts, hygiene.test.ts); the rows are off here so the cards and error counts stay as they were
+  put('/root/.claude/cc-statusline-rows.json', pinSyncOff('{"waiting":false,"hygiene":false}'))
   put('/root/.claude/CLAUDE.md', '# global')
   put(`${CWD}/CLAUDE.md`, '# project')
   for (const f of ['a.md', 'b.md', 'c.md', 'notes.txt']) put(`${CWD}/.claude/rules/${f}`, 'r')

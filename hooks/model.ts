@@ -213,6 +213,7 @@ export const ROW_KEYS: readonly RowKey[] = [
   'sync',
   'fixture',
   'waiting',
+  'hygiene',
 ]
 
 /** The rows file (L19-31): a missing key or file leaves the row on; `enabled:false` is the master switch. */

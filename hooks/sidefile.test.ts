@@ -605,8 +605,8 @@ describe('side file reader: names and locations', () => {
     expect((await readSideFile(memIo({ [at('site-watch.s8p-01.json')]: edited(o => void (o.kind = 'site-watch')) }).io, at('site-watch.s8p-01.json'), NOW)).verdict).toBe('ok')
   })
 
-  test('registry: the five kinds of section 9', () => {
-    expect(Object.keys(KINDS).sort()).toEqual(['fixture', 'review-lane', 'site-watch', 'sync-status', 'waiting'])
+  test('registry: the five kinds of section 9 and git-hygiene (#151)', () => {
+    expect(Object.keys(KINDS).sort()).toEqual(['fixture', 'git-hygiene', 'review-lane', 'site-watch', 'sync-status', 'waiting'])
     expect(KINDS['sync-status']).toMatchObject({ cls: 'local', ttlSec: 900, finalTtlSec: null })
     expect(KINDS['site-watch']).toMatchObject({ cls: 'local', ttlSec: 300, finalTtlSec: null })
     expect(KINDS.waiting).toMatchObject({ cls: 'synced', ttlSec: null, finalTtlSec: null })

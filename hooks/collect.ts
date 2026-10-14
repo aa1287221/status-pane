@@ -39,6 +39,7 @@ import { dispatchOf, parseInflightWarn } from './dispatch'
 import { fixtureOf, naReason, readSideKind } from './sidefile'
 import { collectWaiting } from './waiting'
 import { syncOf } from './sync'
+import { hygieneOf } from './hygiene'
 import type { Cum, RlField, RlSnap, RlSnaps, RlWindow } from './model'
 import type { CpuSample, GitCounts, GitInfo, HookVerdicts, QuotaWindow, Res, Snap, Toggles } from './state'
 
@@ -494,7 +495,7 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
 
   // read only with the agents row on; a refused read is no threshold, so the count is shown plain
   const warn = on.agents ? parseInflightWarn(await io.inflightWarn().catch(() => undefined)) : null
-  const [summary, dir, git, model, agentsRes, compacts, cumRes, quota, cpuRes, ramRes, memory, mcp, edited, side, autoCompactRes, waiting, syncSide] =
+  const [summary, dir, git, model, agentsRes, compacts, cumRes, quota, cpuRes, ramRes, memory, mcp, edited, side, autoCompactRes, waiting, syncSide, hygieneSide] =
     await Promise.all([
       row(on.summary, [base, summaryWired], () => collectSummary(io, b!)),
       row(on.dir || on.repo, [base], async () => shortDir(b!.cwd, b!.home)),
@@ -524,6 +525,7 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
       row(on.usage, [base, usage], () => compactWindowOf(io, u!.context.window, settingsRes?.ok ? settingsRes.v.slice(1) : null)),
       row(on.waiting, [base], async () => collectWaiting(io, { home: b!.home, configDir: await io.configDir() }, input.now)),
       row(on.sync, [base], () => readSideKind(io, 'sync-status', { tmpdir: b!.tmp }, {}, input.now)),
+      row(on.hygiene, [base], () => readSideKind(io, 'git-hygiene', { tmpdir: b!.tmp }, {}, input.now)),
     ])
 
   const fromCum = <T>(f: (c: CumOut) => T): Res<T> =>
@@ -570,9 +572,13 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
   if (on.agents) snap.dispatch = agentsRes.ok ? dispatchOf(agentsRes.v.text, input.now, warn) : agentsRes
   if (on.waiting) snap.waiting = waiting.ok ? { ok: true, v: waiting.v } : { ok: false, why: naReason(waiting.why) }
   if (on.sync) snap.sync = syncSide.ok ? syncOf(syncSide.v, input.now / 1000) : { ok: false, why: naReason(syncSide.why) }
+  // the GIT HYGIENE card; a missing record is the card's own text ("no record yet"), not a fault
+  if (on.hygiene) snap.hygiene = hygieneSide.ok ? hygieneOf(hygieneSide.v, input.now / 1000) : { ok: false, why: naReason(hygieneSide.why) }
   // a SYNC n/a by design is shown but not counted: no file (no producer here yet), or an aged one unless the last
   // producer refresh failed (#123); a row that failed to collect is a fault
   const syncByDesign = syncSide.ok && (syncSide.v.verdict === 'missing' || (syncSide.v.verdict === 'stale' && !input.syncFailed()))
+  // no record yet is by design (nothing has warned on this machine); a stale record is the card's, not a fault
+  const hygieneByDesign = hygieneSide.ok && hygieneSide.v.verdict === 'missing'
   // no tracker file is by design too (the first dispatch writes it): the in-flight row shows n/a but is not counted;
   // an unreadable or corrupt file is a fault
   const dispatchByDesign = agentsRes.ok && agentsRes.v.text === null
@@ -599,6 +605,7 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
     [snap.fixture ?? OK, on.fixture],
     [snap.waiting ?? OK, on.waiting],
     [snap.sync ?? OK, on.sync && !syncByDesign],
+    [snap.hygiene ?? OK, on.hygiene && !hygieneByDesign],
   ]
   // a write that had to fall back to a plain one is an error too, whichever row it fed
   const fallbacks = [cumRes, quota].filter(r => r.ok && r.v.fellBack).length

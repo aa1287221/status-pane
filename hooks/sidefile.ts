@@ -53,6 +53,7 @@ export const KINDS: Record<string, KindSpec> = {
   'site-watch': { cls: 'local', ttlSec: 300, finalTtlSec: null },
   'review-lane': { cls: 'local', ttlSec: 300, finalTtlSec: 86_400 },
   waiting: { cls: 'synced', ttlSec: null, finalTtlSec: null },
+  'git-hygiene': { cls: 'local', ttlSec: null, finalTtlSec: null },
 }
 
 export const SIDE_MAX_BYTES = 64 * 1024
