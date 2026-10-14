@@ -45,18 +45,21 @@ const BREAKPOINTS = [
 ] as const
 
 describe('the kit mounts the pane on every surface at the three breakpoints', () => {
+  // one boot and two mounts per test: a mount costs about 0.15 s, so the four surfaces are split in two
   for (const { columns, name, cards } of BREAKPOINTS) {
-    test(`bodyColumns ${columns} (${name}): the tree validates and holds the cards of that breakpoint`, async ($, on) => {
-      await boot($, on)
-      for (const surface of SURFACES) {
-        // the mount resolves only when the surface's table accepts every element and prop of the tree
-        const ui = await mountPane($, columns, surface)
-        const root = await ui.drawn()
-        expect(root).toMatchObject({ type: 'Box', props: { flexDirection: 'column', paddingX: 1 } })
-        expect(paneParts(root, columns).cards.map(c => [c.title, c.width])).toEqual(cards)
-        await ui.unmount()
-      }
-    })
+    for (const [half, surfaces] of [['terminal and desktop', SURFACES.slice(0, 2)], ['vscode and mobile', SURFACES.slice(2)]] as const) {
+      test(`bodyColumns ${columns} (${name}), ${half}: the tree validates and holds the cards of that breakpoint`, async ($, on) => {
+        await boot($, on)
+        for (const surface of surfaces) {
+          // the mount resolves only when the surface's table accepts every element and prop of the tree
+          const ui = await mountPane($, columns, surface)
+          const root = await ui.drawn()
+          expect(root).toMatchObject({ type: 'Box', props: { flexDirection: 'column', paddingX: 1 } })
+          expect(paneParts(root, columns).cards.map(c => [c.title, c.width])).toEqual(cards)
+          await ui.unmount()
+        }
+      })
+    }
   }
 
   test('the cards are real Boxes with a round dim border and a title row, not lines of text', async ($, on) => {
@@ -303,7 +306,7 @@ describe('no Text passes its box at any width from 20 to 120, through the kit', 
   const LAST = 122
   type On = Parameters<typeof boot>[1]
 
-  // one sweep per test nears the 5 s per-test limit under load, so each scenario is cut in three
+  // one sweep per test nears the 5 s per-test limit under load, so each scenario is cut in six
   const sweep = async ($: Engine, from: number, to: number) => {
     for (const surface of ['terminal', 'desktop'] as const) {
       for (let columns = from; columns <= to; columns++) {
@@ -315,19 +318,34 @@ describe('no Text passes its box at any width from 20 to 120, through the kit', 
     }
   }
 
-  test('a healthy session, widths 22 to 58', async ($, on) => {
+  test('a healthy session, widths 22 to 40', async ($, on) => {
     await boot($, on)
-    await sweep($, FIRST, 58)
+    await sweep($, 22, 40)
   })
 
-  test('a healthy session, widths 59 to 96', async ($, on) => {
+  test('a healthy session, widths 41 to 58', async ($, on) => {
     await boot($, on)
-    await sweep($, 59, 96)
+    await sweep($, 41, 58)
   })
 
-  test('a healthy session, widths 97 to 122', async ($, on) => {
+  test('a healthy session, widths 59 to 77', async ($, on) => {
     await boot($, on)
-    await sweep($, 97, LAST)
+    await sweep($, 59, 77)
+  })
+
+  test('a healthy session, widths 78 to 96', async ($, on) => {
+    await boot($, on)
+    await sweep($, 78, 96)
+  })
+
+  test('a healthy session, widths 97 to 109', async ($, on) => {
+    await boot($, on)
+    await sweep($, 97, 109)
+  })
+
+  test('a healthy session, widths 110 to 122', async ($, on) => {
+    await boot($, on)
+    await sweep($, 110, 122)
   })
 
   const longText = async ($: Engine, on: On, from: number, to: number) => {
@@ -341,7 +359,10 @@ describe('no Text passes its box at any width from 20 to 120, through the kit', 
     })
     await sweep($, from, to)
   }
-  test('a session with long text, wide characters and a failure behind every card, widths 22 to 58', async ($, on) => longText($, on, FIRST, 58))
-  test('a session with long text, wide characters and a failure behind every card, widths 59 to 96', async ($, on) => longText($, on, 59, 96))
-  test('a session with long text, wide characters and a failure behind every card, widths 97 to 122', async ($, on) => longText($, on, 97, LAST))
+  test('a session with long text, wide characters and a failure behind every card, widths 22 to 40', async ($, on) => longText($, on, 22, 40))
+  test('a session with long text, wide characters and a failure behind every card, widths 41 to 58', async ($, on) => longText($, on, 41, 58))
+  test('a session with long text, wide characters and a failure behind every card, widths 59 to 77', async ($, on) => longText($, on, 59, 77))
+  test('a session with long text, wide characters and a failure behind every card, widths 78 to 96', async ($, on) => longText($, on, 78, 96))
+  test('a session with long text, wide characters and a failure behind every card, widths 97 to 109', async ($, on) => longText($, on, 97, 109))
+  test('a session with long text, wide characters and a failure behind every card, widths 110 to 122', async ($, on) => longText($, on, 110, 122))
 })

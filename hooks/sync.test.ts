@@ -260,15 +260,19 @@ describe('sync-status: the card at every width from 22 to 122', () => {
     ['diverged, four-digit counts', { ...okOfData(), ahead: 1234, behind: 5678 }, '+1234 -5678'],
     ['in sync, never pushed or fetched', { ...okOfData(), ahead: 0, behind: 0, lastPushSec: null, lastFetchSec: null }, '✓'],
   ]
+  // each scenario is cut in two width halves: one test per half stays well under the 5 s per-test limit under load
+  const HALVES: [number, number][] = [[FIRST, 72], [73, LAST]]
   for (const [name, v, head] of OK) {
-    test(`${name}: nothing passes its room, every frame is whole, the headline and the six rows are there`, () => {
-      for (let columns = FIRST; columns <= LAST; columns++) {
-        const at = `${name} at bodyColumns ${columns}`
-        const card = holds(makeSnap({ sync: { ok: true, v } }), columns, at)
-        expect(card.value, at).toBe(head)
-        expect(card.body.flatMap(l => LABEL_ROW.exec(l)?.[1] ?? []), at).toEqual(LABELS)
-      }
-    })
+    for (const [lo, hi] of HALVES) {
+      test(`${name}, widths ${lo} to ${hi}: nothing passes its room, every frame is whole, the headline and the six rows are there`, () => {
+        for (let columns = lo; columns <= hi; columns++) {
+          const at = `${name} at bodyColumns ${columns}`
+          const card = holds(makeSnap({ sync: { ok: true, v } }), columns, at)
+          expect(card.value, at).toBe(head)
+          expect(card.body.flatMap(l => LABEL_ROW.exec(l)?.[1] ?? []), at).toEqual(LABELS)
+        }
+      })
+    }
   }
 
   /** What the card says when the reader turns a producer file away. */
@@ -285,15 +289,17 @@ describe('sync-status: the card at every width from 22 to 122', () => {
     ['wide characters only', async () => `n/a（格式錯誤：data.${'目錄'.repeat(30)}）`],
   ]
   for (const [name, reason] of NA) {
-    test(`n/a, ${name}: nothing passes its room, every frame is whole, the reason is read to its end`, async () => {
-      const why = await reason()
-      for (let columns = FIRST; columns <= LAST; columns++) {
-        const at = `n/a ${name} at bodyColumns ${columns}`
-        const card = holds(makeSnap({ sync: { ok: false, why } }), columns, at)
-        expect(card.value, at).toBe('')
-        expect(card.body.join('').replace(/\s/g, ''), at).toBe(why.replace(/\s/g, ''))
-      }
-    })
+    for (const [lo, hi] of HALVES) {
+      test(`n/a, ${name}, widths ${lo} to ${hi}: nothing passes its room, every frame is whole, the reason is read to its end`, async () => {
+        const why = await reason()
+        for (let columns = lo; columns <= hi; columns++) {
+          const at = `n/a ${name} at bodyColumns ${columns}`
+          const card = holds(makeSnap({ sync: { ok: false, why } }), columns, at)
+          expect(card.value, at).toBe('')
+          expect(card.body.join('').replace(/\s/g, ''), at).toBe(why.replace(/\s/g, ''))
+        }
+      })
+    }
   }
 })
 
@@ -529,6 +535,9 @@ const coarse = async (w: World, clock: { advance: (ms: number) => Promise<void> 
 describe('sync-status: the mod starts the producer every five minutes (#91)', () => {
   const MIN5 = 300_000
   const ROWS = '/root/.claude/cc-statusline-rows.json'
+  // only SYNC and the SYSTEM card stay on: a 30 s tick then collects two cards, not the git, usage and cost reads
+  const QUIET_ROWS = (extra: Record<string, boolean> = {}) =>
+    JSON.stringify({ enabled: true, ...Object.fromEntries(ROW_KEYS.filter(k => k !== 'sync' && k !== 'sys').map(k => [k, false])), ...extra })
   const PROD = '/root/.claude/scripts/hooks/sync-status.py'
   const PROD_CFG = '/opt/cc/scripts/hooks/sync-status.py'
   const ARGV = ['python3', '-I', '-B', PROD, '--print']
@@ -546,7 +555,7 @@ describe('sync-status: the mod starts the producer every five minutes (#91)', ()
 
   test('on by default the first start is one interval after the mod starts, then one per interval, bounded at 30 s', async ($, on) => {
     const { world, advance, clock } = await boot($, on, w => {
-      w.files.delete(ROWS)
+      w.files.set(ROWS, QUIET_ROWS())
       w.files.set(PROD, '# producer')
       w.procs.set(ARGV.join(' '), { exitCode: 0 })
     })
@@ -562,7 +571,7 @@ describe('sync-status: the mod starts the producer every five minutes (#91)', ()
 
   test('"sync": false: the producer is never started, however long the mod runs', async ($, on) => {
     const { world, clock } = await boot($, on, w => {
-      w.files.set(ROWS, '{"sync":false}')
+      w.files.set(ROWS, QUIET_ROWS({ sync: false }))
       w.files.set(PROD, '# producer')
       w.procs.set(ARGV.join(' '), { exitCode: 0 })
     })
@@ -584,7 +593,7 @@ describe('sync-status: the mod starts the producer every five minutes (#91)', ()
 
   test('CLAUDE_CONFIG_DIR, when set, is the directory the producer is started from', async ($, on) => {
     const { world, clock } = await boot($, on, w => {
-      w.files.delete(ROWS)
+      w.files.set(ROWS, QUIET_ROWS())
       w.env.CLAUDE_CONFIG_DIR = '/opt/cc'
       w.files.set(PROD_CFG, '# producer')
       w.procs.set(['python3', '-I', '-B', PROD_CFG, '--print'].join(' '), { exitCode: 0 })
@@ -596,7 +605,7 @@ describe('sync-status: the mod starts the producer every five minutes (#91)', ()
 
   test('without CLAUDE_CONFIG_DIR the producer is HOME/.claude/scripts/hooks/sync-status.py', async ($, on) => {
     const { world, clock } = await boot($, on, w => {
-      w.files.delete(ROWS)
+      w.files.set(ROWS, QUIET_ROWS())
       w.files.set(PROD, '# producer')
       w.procs.set(ARGV.join(' '), { exitCode: 0 })
     })
@@ -606,7 +615,7 @@ describe('sync-status: the mod starts the producer every five minutes (#91)', ()
 
   test('an empty CLAUDE_CONFIG_DIR counts as unset, as the hook reads it', async ($, on) => {
     const { world, clock } = await boot($, on, w => {
-      w.files.delete(ROWS)
+      w.files.set(ROWS, QUIET_ROWS())
       w.env.CLAUDE_CONFIG_DIR = ''
       w.files.set(PROD, '# producer')
       w.procs.set(ARGV.join(' '), { exitCode: 0 })
@@ -616,7 +625,7 @@ describe('sync-status: the mod starts the producer every five minutes (#91)', ()
   })
 
   test('a missing producer file: the reason is logged to the debug log and the cards are the same', async ($, on) => {
-    const { world, clock } = await boot($, on, w => w.files.delete(ROWS))
+    const { world, clock } = await boot($, on, w => w.files.set(ROWS, QUIET_ROWS()))
     const before = await cards($)
     await coarse(world, clock, MIN5)
     expect(await cards($)).toEqual(before)
@@ -625,7 +634,7 @@ describe('sync-status: the mod starts the producer every five minutes (#91)', ()
 
   test('a non-zero exit: the code and the report are logged and the cards are the same', async ($, on) => {
     const { world, clock } = await boot($, on, w => {
-      w.files.delete(ROWS)
+      w.files.set(ROWS, QUIET_ROWS())
       w.files.set(PROD, '# producer')
       w.procs.set(ARGV.join(' '), { exitCode: 1, stdout: 'sync-status: failed\n  error:     git_timeout: slow\n' })
     })
@@ -637,7 +646,7 @@ describe('sync-status: the mod starts the producer every five minutes (#91)', ()
 
   test('a timeout: the host ends the run with an error, the reason is logged, the cards are the same, and the next interval runs', async ($, on) => {
     const { world, advance, clock } = await boot($, on, w => {
-      w.files.delete(ROWS)
+      w.files.set(ROWS, QUIET_ROWS())
       w.files.set(PROD, '# producer')
       w.delay.set(RUN_KEY(ARGV), 30_000)
       w.procs.set(ARGV.join(' '), new Error('timed out after 30000 ms'))
@@ -669,7 +678,7 @@ describe('sync-status: the mod starts the producer every five minutes (#91)', ()
 
   test('a turn that ends on a stale snapshot re-arms the timers, so the period starts again from that turn', async ($, on) => {
     const { world, advance, clock } = await boot($, on, w => {
-      w.files.delete(ROWS)
+      w.files.set(ROWS, QUIET_ROWS())
       w.files.set(PROD, '# producer')
       w.procs.set(ARGV.join(' '), { exitCode: 0 })
     })
@@ -687,7 +696,7 @@ describe('sync-status: the mod starts the producer every five minutes (#91)', ()
 
   test('before the first snapshot exists, a producer tick starts nothing and logs nothing (the card check reads no snapshot as off)', async ($, on) => {
     const { world, clock } = await boot($, on, w => {
-      w.files.delete(ROWS)
+      w.files.set(ROWS, QUIET_ROWS())
       w.files.set(PROD, '# producer')
       w.procs.set(ARGV.join(' '), { exitCode: 0 })
       // a refused write leaves no snapshot, so every read of it finds none

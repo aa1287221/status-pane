@@ -228,9 +228,13 @@ describe('the CPU history', () => {
 
   test('the ring keeps the last 16 readings', async ($, on) => {
     const { world, cpu } = await boot0($, on)
-    for (let i = 1; i <= 20; i++) await cpu.read(i * 5)
-
-    expect(cpuHistory(world)).toEqual(Array.from({ length: 16 }, (_, i) => (i + 5) * 5))
+    // the ring a longer run would have left: the next readings must push the oldest out one by one
+    const seeded = Array.from({ length: 16 }, (_, i) => (i + 1) * 5)
+    world.readOnce.set('cpuHist', seeded)
+    await cpu.read(50)
+    expect(cpuHistory(world)).toEqual([...seeded.slice(1), 50])
+    await cpu.read(100)
+    expect(cpuHistory(world)).toEqual([...seeded.slice(2), 50, 100])
     expect((await chart($)).line).toMatch(/^cpu {2,}\S{16} 100%$/)
   })
 
