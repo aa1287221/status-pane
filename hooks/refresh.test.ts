@@ -124,7 +124,8 @@ describe('the cum file', () => {
     expect(cumOf(world)).toMatchObject({ cost: { total: 4.5, base: 4.5 } })
   })
 
-  test('a fresh session with no context figures reads a dash, not 0%, in the pane and leaves ctx out of the tail', async ($, on) => {
+  // 15 s: normal 0.7 s (load 2-4), 3.3 s at load 70-84
+  test('a fresh session with no context figures reads a dash, not 0%, in the pane and leaves ctx out of the tail', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, advance, clock } = await boot($, on)
 
     setUsage(world, { context: { window: 200_000 } })
@@ -250,7 +251,8 @@ describe('R14 the shared files are written atomically', () => {
 })
 
 describe('lines and tokens counted by the hooks', () => {
-  test('an edit adds its + and - lines once, however many refreshes follow', async ($, on) => {
+  // 15 s: normal 0.8 s (load 2-4), 2.5 s at load 70-84
+  test('an edit adds its + and - lines once, however many refreshes follow', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, advance, clock } = await boot($, on)
     world.toolResult = () => editResult(['-old', '+n1', '+n2', '+n3'])
 

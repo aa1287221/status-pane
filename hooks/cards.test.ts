@@ -63,7 +63,8 @@ describe('the kit mounts the pane on every surface at the three breakpoints', ()
     }
   }
 
-  test('the cards are real Boxes with a round dim border and a title row, not lines of text', async ($, on) => {
+  // 15 s: normal 1.2 s (load 2-4), 3.2 s at load 70-84
+  test('the cards are real Boxes with a round dim border and a title row, not lines of text', { timeoutMs: 15_000 }, async ($, on) => {
     await boot($, on)
     for (const surface of SURFACES) {
       const ui = await mountPane($, 89, surface)
@@ -319,17 +320,20 @@ describe('no Text passes its box at any width from 20 to 120, through the kit', 
     }
   }
 
-  test('a healthy session, widths 22 to 40', async ($, on) => {
+  // 15 s: 3.1 s at load 70-84
+  test('a healthy session, widths 22 to 40', { timeoutMs: 15_000 }, async ($, on) => {
     await boot($, on)
     await sweep($, 22, 40)
   })
 
-  test('a healthy session, widths 41 to 58', async ($, on) => {
+  // 15 s: 3.5 s at load 70-84
+  test('a healthy session, widths 41 to 58', { timeoutMs: 15_000 }, async ($, on) => {
     await boot($, on)
     await sweep($, 41, 58)
   })
 
-  test('a healthy session, widths 59 to 77', async ($, on) => {
+  // 15 s: 5.1 s at load 70-84
+  test('a healthy session, widths 59 to 77', { timeoutMs: 15_000 }, async ($, on) => {
     await boot($, on)
     await sweep($, 59, 77)
   })
@@ -340,12 +344,14 @@ describe('no Text passes its box at any width from 20 to 120, through the kit', 
     await sweep($, 78, 96)
   })
 
-  test('a healthy session, widths 97 to 109', async ($, on) => {
+  // 15 s: 5.1 s at load 70-84
+  test('a healthy session, widths 97 to 109', { timeoutMs: 15_000 }, async ($, on) => {
     await boot($, on)
     await sweep($, 97, 109)
   })
 
-  test('a healthy session, widths 110 to 122', async ($, on) => {
+  // 15 s: 5.1 s at load 70-84
+  test('a healthy session, widths 110 to 122', { timeoutMs: 15_000 }, async ($, on) => {
     await boot($, on)
     await sweep($, 110, 122)
   })
@@ -361,10 +367,16 @@ describe('no Text passes its box at any width from 20 to 120, through the kit', 
     })
     await sweep($, from, to)
   }
-  test('a session with long text, wide characters and a failure behind every card, widths 22 to 40', async ($, on) => longText($, on, 22, 40))
-  test('a session with long text, wide characters and a failure behind every card, widths 41 to 58', async ($, on) => longText($, on, 41, 58))
-  test('a session with long text, wide characters and a failure behind every card, widths 59 to 77', async ($, on) => longText($, on, 59, 77))
-  test('a session with long text, wide characters and a failure behind every card, widths 78 to 96', async ($, on) => longText($, on, 78, 96))
-  test('a session with long text, wide characters and a failure behind every card, widths 97 to 109', async ($, on) => longText($, on, 97, 109))
-  test('a session with long text, wide characters and a failure behind every card, widths 110 to 122', async ($, on) => longText($, on, 110, 122))
+  // 15 s: 4.3 s at load 70-84
+  test('a session with long text, wide characters and a failure behind every card, widths 22 to 40', { timeoutMs: 15_000 }, async ($, on) => longText($, on, 22, 40))
+  // 15 s: 4.4 s at load 70-84
+  test('a session with long text, wide characters and a failure behind every card, widths 41 to 58', { timeoutMs: 15_000 }, async ($, on) => longText($, on, 41, 58))
+  // 15 s: 4.8 s at load 70-84
+  test('a session with long text, wide characters and a failure behind every card, widths 59 to 77', { timeoutMs: 15_000 }, async ($, on) => longText($, on, 59, 77))
+  // 15 s: 5.0 s at load 70-84
+  test('a session with long text, wide characters and a failure behind every card, widths 78 to 96', { timeoutMs: 15_000 }, async ($, on) => longText($, on, 78, 96))
+  // 15 s: 5.0 s at load 70-84
+  test('a session with long text, wide characters and a failure behind every card, widths 97 to 109', { timeoutMs: 15_000 }, async ($, on) => longText($, on, 97, 109))
+  // 15 s: 5.1 s at load 70-84
+  test('a session with long text, wide characters and a failure behind every card, widths 110 to 122', { timeoutMs: 15_000 }, async ($, on) => longText($, on, 110, 122))
 })

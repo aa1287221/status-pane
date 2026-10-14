@@ -308,7 +308,8 @@ describe('the WAITING card: side files through the engine', () => {
     expect(await hintText($)).toContain('WAIT 2 (2 due)')
   })
 
-  test('the producer control: flipping hostb closer to open brings X back, so the sample discriminates', async ($, on) => {
+  // 15 s: normal 0.9 s (load 2-4), 3.2 s at load 70-84
+  test('the producer control: flipping hostb closer to open brings X back, so the sample discriminates', { timeoutMs: 15_000 }, async ($, on) => {
     const hostb = CAPTURE['waiting.hostb.json']!.lines.join('\n').replace('"state": "closed"', '"state": "open"') + '\n'
     await boot($, on, w => captured(w, hostb))
     expect(cardOf(await paneView($, 89), 'WAITING').body.join('\n')).toContain('X waiting')

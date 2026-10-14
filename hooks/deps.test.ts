@@ -94,7 +94,8 @@ describe('dependencies: a data source that is missing reads n/a, never idle', ()
     ])
   })
 
-  test('file-tracker.js missing: the edited part of ACTIVITY says so and counts one error, nothing else changes', async ($, on) => {
+  // 15 s: normal 0.8 s (load 2-4), 2.2 s at load 70-84
+  test('file-tracker.js missing: the edited part of ACTIVITY says so and counts one error, nothing else changes', { timeoutMs: 15_000 }, async ($, on) => {
     await boot($, on, w => unwire(w, 'file-tracker.js'))
     expectOnlyCard(await paneView($), 'ACTIVITY', [
       pair('in-flight', '0 · 1 stale', 24),
@@ -118,7 +119,8 @@ describe('dependencies: a data source that is missing reads n/a, never idle', ()
     expect(cards.SYSTEM?.body).toEqual(systemWith(1))
   })
 
-  test('compact-monitor.js missing: the context says so under the figures, the gauge and the figures stay', async ($, on) => {
+  // 15 s: normal 0.9 s (load 2-4), 1.9 s at load 70-84
+  test('compact-monitor.js missing: the context says so under the figures, the gauge and the figures stay', { timeoutMs: 15_000 }, async ($, on) => {
     await boot($, on, w => unwire(w, 'compact-monitor.js'))
     const parts = await paneView($)
     const cards = summarize(parts).cards

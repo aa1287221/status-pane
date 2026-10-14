@@ -140,7 +140,8 @@ describe('#10 pane through the engine', () => {
     expect(parts.footer).toEqual([])
   })
 
-  test('the timer draws a new snapshot every 30 s', async ($, on) => {
+  // 15 s: normal 0.9 s (load 2-4), 2.8 s at load 70-84
+  test('the timer draws a new snapshot every 30 s', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, advance, clock } = await boot($, on)
     expect(world.usageCalls).toBe(1)
 
@@ -185,7 +186,8 @@ describe('the CPU history', () => {
   }
   const systemOf = async ($: Engine, columns = 49, surface: 'terminal' | 'desktop' = 'terminal') => cardOf(await paneView($, columns, surface), 'SYSTEM').body
 
-  test('the first reading has no share to draw and adds no sample; each reading after adds the one it made', async ($, on) => {
+  // 15 s: normal 0.9 s (load 2-4), 2.7 s at load 70-84
+  test('the first reading has no share to draw and adds no sample; each reading after adds the one it made', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, cpu } = await boot0($, on)
     expect(cpuHistory(world)).toEqual([])
     expect(world.stateSets.filter(k => k === 'cpuHist')).toEqual([])
@@ -211,7 +213,8 @@ describe('the CPU history', () => {
     expect(top).toBe(`${' '.repeat(22)}${'░'.repeat(15)}█`)
   })
 
-  test('a reading that failed adds no sample, and the next one is measured from the last that worked', async ($, on) => {
+  // 15 s: normal 0.7 s (load 2-4), 3.0 s at load 70-84
+  test('a reading that failed adds no sample, and the next one is measured from the last that worked', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, advance, clock, cpu } = await boot0($, on)
     await cpu.read(50)
 
@@ -227,7 +230,8 @@ describe('the CPU history', () => {
     expect((await chart($)).line).toBe(pair('cpu', '░░░░░░░░░░░░░░██ 100%', 43))
   })
 
-  test('the ring keeps the last 16 readings', async ($, on) => {
+  // 15 s: normal 1.8 s (load 2-4), 2.7 s at load 70-84
+  test('the ring keeps the last 16 readings', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, cpu } = await boot0($, on)
     // the ring a longer run would have left: the next readings must push the oldest out one by one
     const seeded = Array.from({ length: 16 }, (_, i) => (i + 1) * 5)
@@ -615,7 +619,8 @@ describe('#14 effort', () => {
     expect(world.reads).not.toContain(EFFORT_FILE)
   })
 
-  test('a classic hook input carries the level, and the newest one wins', async ($, on) => {
+  // 15 s: normal 0.3 s (load 2-4), 4.4 s at load 70-84
+  test('a classic hook input carries the level, and the newest one wins', { timeoutMs: 15_000 }, async ($, on) => {
     const { advance, clock } = await boot($, on, noEnv)
 
     await $.classic.PostToolUse(postToolUse({ effort: { level: 'xhigh' } }))
@@ -696,7 +701,8 @@ describe('#14 effort', () => {
       expect(await modelRow($)).toBe('Opus 5.5 · medium · v2.1.294')
     })
 
-    test('with no top-level level the modelSettings key that is the longest prefix of the model id wins', async ($, on) => {
+    // 15 s: normal 0.3 s (load 2-4), 4.2 s at load 70-84
+    test('with no top-level level the modelSettings key that is the longest prefix of the model id wins', { timeoutMs: 15_000 }, async ($, on) => {
       const modelSettings = {
         'claude-opus': { effortLevel: 'low' },
         'claude-opus-5': { effortLevel: 'high' },
@@ -846,7 +852,8 @@ describe('R2 R16 R26 the stale marks repaint without a refresh', () => {
     await ui.unmount()
   })
 
-  test('a refresh writes its own marks anew, so a live timer never lets a pane go stale', async ($, on) => {
+  // 15 s: normal 0.3 s (load 2-4), 4.2 s at load 70-84
+  test('a refresh writes its own marks anew, so a live timer never lets a pane go stale', { timeoutMs: 15_000 }, async ($, on) => {
     const { advance, clock } = await boot($, on)
     const ui = await mountPane($)
     for (let i = 0; i < 4; i++) {
@@ -870,7 +877,8 @@ describe('R2 R16 R26 the stale marks repaint without a refresh', () => {
     await ui.unmount()
   })
 
-  test('the next snapshot cancels the timers of the last one, so a live refresh leaves nothing to fire', async ($, on) => {
+  // 15 s: normal 0.2 s (load 2-4), 4.3 s at load 70-84
+  test('the next snapshot cancels the timers of the last one, so a live refresh leaves nothing to fire', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, advance, clock } = await boot($, on)
     await advance(95_000)
     await clock.settle()

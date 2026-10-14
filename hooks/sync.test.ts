@@ -418,7 +418,8 @@ describe('sync-status: the row through the engine (on by default, opt-out)', () 
     return { parts: paneParts(tree, 89), text: renderTree(tree, 89).join('\n') }
   }
 
-  test('on by default: a fresh producer file draws -3 PULL as the last card and leads the tail, with no error', async ($, on) => {
+  // 15 s: normal 0.9 s (load 2-4), 3.9 s at load 70-84
+  test('on by default: a fresh producer file draws -3 PULL as the last card and leads the tail, with no error', { timeoutMs: 15_000 }, async ($, on) => {
     await boot($, on, w => {
       w.now = REF_NOW_MS
       w.files.delete(ROWS)
@@ -584,7 +585,8 @@ describe('sync-status: the mod starts the producer every five minutes (#91)', ()
     expect(debugLines(world).filter(t => /sync-status/.test(t))).toEqual([])
   })
 
-  test('"enabled": false: the producer is never started either, however long the mod runs', async ($, on) => {
+  // 15 s: normal 0.9 s (load 2-4), 3.2 s at load 70-84
+  test('"enabled": false: the producer is never started either, however long the mod runs', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, clock } = await boot($, on, w => {
       w.files.set(ROWS, '{"enabled":false}')
       w.files.set(PROD, '# producer')
@@ -607,7 +609,8 @@ describe('sync-status: the mod starts the producer every five minutes (#91)', ()
     expect(starts(world)).toHaveLength(0)
   })
 
-  test('without CLAUDE_CONFIG_DIR the producer is HOME/.claude/scripts/hooks/sync-status.py', async ($, on) => {
+  // 15 s: normal 0.5 s (load 2-4), 4.2 s at load 70-84
+  test('without CLAUDE_CONFIG_DIR the producer is HOME/.claude/scripts/hooks/sync-status.py', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, clock } = await boot($, on, w => {
       w.files.set(ROWS, QUIET_ROWS())
       w.files.set(PROD, '# producer')
@@ -617,7 +620,8 @@ describe('sync-status: the mod starts the producer every five minutes (#91)', ()
     expect(starts(world)).toHaveLength(1)
   })
 
-  test('an empty CLAUDE_CONFIG_DIR counts as unset, as the hook reads it', async ($, on) => {
+  // 15 s: normal 0.5 s (load 2-4), 4.8 s at load 70-84
+  test('an empty CLAUDE_CONFIG_DIR counts as unset, as the hook reads it', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, clock } = await boot($, on, w => {
       w.files.set(ROWS, QUIET_ROWS())
       w.env.CLAUDE_CONFIG_DIR = ''
@@ -636,7 +640,8 @@ describe('sync-status: the mod starts the producer every five minutes (#91)', ()
     expect(debugLines(world).some(t => /missing/.test(t) && t.includes(PROD))).toBe(true)
   })
 
-  test('a non-zero exit: the code and the report are logged and the cards are the same', async ($, on) => {
+  // 15 s: normal 0.6 s (load 2-4), 4.8 s at load 70-84
+  test('a non-zero exit: the code and the report are logged and the cards are the same', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, clock } = await boot($, on, w => {
       w.files.set(ROWS, QUIET_ROWS())
       w.files.set(PROD, '# producer')
@@ -648,7 +653,8 @@ describe('sync-status: the mod starts the producer every five minutes (#91)', ()
     expect(await cards($)).toEqual(before)
   })
 
-  test('a timeout: the host ends the run with an error, the reason is logged, the cards are the same, and the next interval runs', async ($, on) => {
+  // 15 s: normal 1.0 s (load 2-4), 5.2 s at load 70-84
+  test('a timeout: the host ends the run with an error, the reason is logged, the cards are the same, and the next interval runs', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, advance, clock } = await boot($, on, w => {
       w.files.set(ROWS, QUIET_ROWS())
       w.files.set(PROD, '# producer')
@@ -681,7 +687,8 @@ describe('sync-status: the mod starts the producer every five minutes (#91)', ()
     expect(starts(world)).toHaveLength(2)
   })
 
-  test('a turn that ends on a stale snapshot re-arms the timers, so the period starts again from that turn', async ($, on) => {
+  // 15 s: normal 0.7 s (load 2-4), 5.5 s at load 70-84
+  test('a turn that ends on a stale snapshot re-arms the timers, so the period starts again from that turn', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, advance, clock } = await boot($, on, w => {
       w.files.set(ROWS, QUIET_ROWS())
       w.files.set(PROD, '# producer')
@@ -699,7 +706,8 @@ describe('sync-status: the mod starts the producer every five minutes (#91)', ()
     expect(starts(world)).toHaveLength(1)
   })
 
-  test('before the first snapshot exists, a producer tick starts nothing and logs nothing (the card check reads no snapshot as off)', async ($, on) => {
+  // 15 s: normal 0.4 s (load 2-4), 4.3 s at load 70-84
+  test('before the first snapshot exists, a producer tick starts nothing and logs nothing (the card check reads no snapshot as off)', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, clock } = await boot($, on, w => {
       w.files.set(ROWS, QUIET_ROWS())
       w.files.set(PROD, '# producer')
@@ -790,7 +798,8 @@ describe('sync-status: a stale file counts when the last refresh failed (#123)',
     await expectRow($, /^n\/a（過期/, 1)
   })
 
-  test('matrix: stale, the last refresh could not spawn python3: counted one', async ($, on) => {
+  // 15 s: normal 0.4 s (load 2-4), 5.0 s at load 70-84
+  test('matrix: stale, the last refresh could not spawn python3: counted one', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, clock } = await modAt($, on, AGED_MS, behind, new Error('status-pane: $.process.run(python3) spawn python3 ENOENT'))
     await coarse(world, clock, MIN5)
     expect(starts(world).length).toBe(1)
@@ -855,7 +864,8 @@ describe('sync-status: a stale file counts when the last refresh failed (#123)',
     await expectRow($, /^n\/a（過期/, 1)
   })
 
-  test('matrix: a failed run, then a clean run and a fresh file: not counted, and not counted once the file ages again', async ($, on) => {
+  // 15 s: normal 1.3 s (load 2-4), 5.0 s at load 70-84
+  test('matrix: a failed run, then a clean run and a fresh file: not counted, and not counted once the file ages again', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, clock } = await modAt($, on, AGED_MS, behind, { exitCode: 2 })
     await coarse(world, clock, MIN5)
     await expectRow($, /^n\/a（過期/, 1)
@@ -878,7 +888,8 @@ describe('sync-status: a stale file counts when the last refresh failed (#123)',
     await expectRow($, /^n\/a（收集失敗：/, 1)
   })
 
-  test('matrix: a tick skipped for a run still going leaves the outcome as it was', async ($, on) => {
+  // 15 s: normal 1.0 s (load 2-4), 5.1 s at load 70-84
+  test('matrix: a tick skipped for a run still going leaves the outcome as it was', { timeoutMs: 15_000 }, async ($, on) => {
     // the held run would end at 1000 s, past the last tick the test reads (900 s), so it is still going for every read
     const { world, clock } = await modAt($, on, AGED_MS, behind, { exitCode: 2 })
     await coarse(world, clock, MIN5)
