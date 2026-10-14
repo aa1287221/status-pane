@@ -29,8 +29,45 @@ const DUE_SINCE = sec('2026-10-03T11:59:59Z')
 const NEW_SINCE = sec('2026-10-07T12:00:00Z')
 
 const item = (over: Partial<WaitingItem> = {}): WaitingItem => ({ id: 'hosta-aaaa0001', host: 'hosta', what: 'a thing to wait for', sinceSec: NEW_SINCE, ...over })
-const board = (items: WaitingItem[], down: WaitingDown[] = []) => ({ ok: true as const, v: { items, openTotal: items.length, down, skipped: 0 } })
-const snapOf = (items: WaitingItem[], down: WaitingDown[] = []) => makeSnap({ waiting: board(items, down) })
+const board = (items: WaitingItem[], down: WaitingDown[] = [], skipped = 0) => ({ ok: true as const, v: { items, openTotal: items.length, down, skipped } })
+const snapOf = (items: WaitingItem[], down: WaitingDown[] = [], skipped = 0) => makeSnap({ waiting: board(items, down, skipped) })
+
+/** A valid `waiting` side file for `host` (the envelope of SCHEMA 2, items as given). */
+const sideFile = (host: string, items: object[] = []): string =>
+  JSON.stringify(
+    {
+      schema_version: 1,
+      kind: 'waiting',
+      producer: { id: 'waiting', host },
+      station: null,
+      run_id: null,
+      observed_at: '2026-10-10T12:00:00Z',
+      last_success_at: '2026-10-10T12:00:00Z',
+      collection_status: 'ok',
+      error: null,
+      data: { items },
+    },
+    null,
+    2,
+  ) + '\n'
+const sideItem = (id: string, what: string): object => ({
+  id,
+  state: 'open',
+  updated_at: '2026-10-10T06:00:00Z',
+  since: '2026-10-09T06:00:00Z',
+  what,
+  links: [],
+  closed_at: null,
+  closed_by: null,
+})
+/** Sixteen valid hosts that sort first (a00..a15) plus `zed`, the seventeenth by name: `zed` is skipped. Host a00 gets `first`. */
+const seventeenFiles = (w: { files: Map<string, string> }, first: object[] = [], zed: object[] = [sideItem('zed-aaaa0001', 'sorts last, not read')]): void => {
+  for (let i = 0; i < 16; i++) {
+    const host = `a${String(i).padStart(2, '0')}`
+    w.files.set(`${SIDE}/waiting.${host}.json`, sideFile(host, i === 0 ? first : []))
+  }
+  w.files.set(`${SIDE}/waiting.zed.json`, sideFile('zed', zed))
+}
 
 const layoutAt = (snap: Snap, columns: number, nowMs = REF_NOW, tzMin = 0): Layout =>
   paneLayout(snap, { columns, nowMs, tzMin, raster: true, cpuHist: [] })
@@ -122,6 +159,30 @@ describe('the WAITING card: title and rows', () => {
     expect(card.value).toBe('—')
   })
 
+  test('skipped files beside items: ≥ in the title, +N files not read as the last row', () => {
+    const card = waitingOf(snapOf([item({ what: 'still open' })], [], 2), 89)
+    expect(card.value).toBe('≥1')
+    expect(card.body.join('\n')).toContain('still open')
+    expect(card.body.at(-1)).toContain('+2 files not read')
+  })
+
+  test('skipped files and no item, no host down: ≥0 and the +N row; 沒有登記 is not drawn', () => {
+    const card = waitingOf(makeSnap({ waiting: board([], [], 3) }), 89)
+    expect(card.value).toBe('≥0')
+    expect(card.body.join('\n')).not.toContain('沒有登記')
+    expect(card.body.at(-1)).toContain('+3 files not read')
+    expect(card.body.length).toBe(1)
+  })
+
+  test('open items, a host down and skipped files: ≥ in the title, the host row before the +N row, WAIT ≥N in the tail', () => {
+    const snap = snapOf([item({ id: 'hosta-aaaa0001' }), item({ id: 'hosta-aaaa0002' })], [{ host: 'hostb', text: 'n/a（缺檔）' }], 2)
+    const card = waitingOf(snap, 89)
+    expect(card.value).toBe('≥2')
+    expect(card.body.at(-1)).toContain('+2 files not read')
+    expect(card.body.slice(0, -1).join('\n')).toContain('hostb n/a（缺檔）')
+    expect(tailText(snap, REF_NOW, 0) ?? '').toMatch(/^WAIT ≥2/)
+  })
+
   test('more than 8 items: 8 drawn, then +N more; the title counts them all', () => {
     const items = Array.from({ length: 10 }, (_, i) => item({ id: `hosta-aaaa00${String(i).padStart(2, '0')}`, what: `item ${i}`, sinceSec: NEW_SINCE + i }))
     const card = waitingOf(snapOf(items), 89)
@@ -171,6 +232,12 @@ describe('the WAITING tail segment', () => {
     expect(tail(snapOf(three))).toMatch(/^WAIT 3 \(1 due\)/)
     expect(tail(snapOf(three.slice(0, 2)))).toMatch(/^WAIT 2/)
     expect(tail(snapOf(three.slice(0, 2), [{ host: 'hostb', text: 'n/a（缺檔）' }]))).toMatch(/^WAIT ≥2/)
+  })
+
+  test('skipped files beside open items: WAIT ≥N, with the due count; 0 open items: no segment', () => {
+    const snap = snapOf([item({ id: 'hosta-aaaa0001', sinceSec: DUE_SINCE }), item({ id: 'hosta-aaaa0002' })], [], 2)
+    expect(tail(snap)).toMatch(/^WAIT ≥2 \(1 due\)/)
+    expect(tail(makeSnap({ waiting: board([], [], 2) }))).not.toContain('WAIT')
   })
 
   test('0 open items, or nothing readable: no WAIT segment', () => {
@@ -297,6 +364,46 @@ describe('the WAITING card: side files through the engine', () => {
     expect(cardOf(parts, 'CONTEXT').value).toBe('3%')
     const lines = renderTree(await mountPane($, 89).then(u => u.drawn()), 89).join('\n')
     expect(lines).toMatch(/1 error\b/)
+  })
+
+  test('skipped files beside an open item: ≥ in the title and the tail, the +N row last, the item drawn', async ($, on) => {
+    await boot($, on, w => {
+      w.now = REF_NOW
+      w.files.set(ROWS_FILE, pinSyncOff('{"waiting":true}'))
+      seventeenFiles(w, [sideItem('a00-aaaa0001', 'first host item')])
+    })
+    for (const columns of [36, 49, 89]) {
+      const card = cardOf(await paneView($, columns), 'WAITING')
+      expect(card.value).toBe('≥1')
+      expect(card.body.join('\n')).toContain('first host item')
+      expect(card.body.join('\n')).not.toContain('sorts last')
+      expect(card.body.at(-1)).toContain('+1 files not read')
+    }
+    expect(await hintText($)).toContain('WAIT ≥1')
+  })
+
+  test('skipped files and no open item: ≥0, the +1 row, no 沒有登記, no WAIT segment', async ($, on) => {
+    await boot($, on, w => {
+      w.now = REF_NOW
+      w.files.set(ROWS_FILE, pinSyncOff('{"waiting":true}'))
+      seventeenFiles(w, [], [])
+    })
+    const card = cardOf(await paneView($, 89), 'WAITING')
+    expect(card.value).toBe('≥0')
+    expect(card.body.join('\n')).not.toContain('沒有登記')
+    expect(card.body.at(-1)).toContain('+1 files not read')
+    expect(await hintText($)).not.toContain('WAIT')
+  })
+
+  test('skipped files are not a SYSTEM error: no errors count, whatever the number skipped', async ($, on) => {
+    await boot($, on, w => {
+      w.now = REF_NOW
+      w.files.set(ROWS_FILE, pinSyncOff('{"waiting":true}'))
+      seventeenFiles(w, [sideItem('a00-aaaa0001', 'first host item')])
+    })
+    expect(cardOf(await paneView($, 89), 'WAITING').body.at(-1)).toContain('+1 files not read')
+    const lines = renderTree(await mountPane($, 89).then(u => u.drawn()), 89).join('\n')
+    expect(lines).not.toMatch(/\d+ errors?\b/)
   })
 
   test('a healthy board adds no error', async ($, on) => {

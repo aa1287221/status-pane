@@ -489,25 +489,28 @@ refused `exists` or read, a wrong type from the seam, an invalid clock or a host
 On unless the rows file has `"waiting": false` (a falsy value does the same; not in `OPT_IN`, so an empty board shows
 `0` and 沒有登記). Off means the directory is never listed. Reads `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/-project/references/side-files/` after `exists`,
 then `list`: names matching `^waiting\.([A-Za-z0-9][A-Za-z0-9_-]{0,63})\.json$` only, sorted, 16 read at most (the rest
-counted as `skipped`). Each file goes through `readSideFile` (envelope rules and the host-vs-producer check), then the
+counted as `skipped`; see the cap paragraph below). Each file goes through `readSideFile` (envelope rules and the host-vs-producer check), then the
 SCHEMA 9 item rules; a violation makes that host `n/a（格式錯誤：第 n 筆 …）`. Merge (7.1): closed beats open, then the
-later `updated_at`, then the larger host. Open winners only, since ascending then id, 100 kept, the true total counted.
+later `updated_at`, then the larger host. Open winners only, since ascending then id, 100 kept, the true total counted. Due is counted among the 100 kept (oldest
+first), so the due count is exact unless all 100 kept items are due and more than 100 are open; then it is a lower
+bound (at most 100).
 Age and due are drawn at the draw clock, never stored: `<1h`, `Nh`, `Nd`; due when strictly more than 604800 s.
-Title: `N`, `N · D due`, `≥N` when a host is unreadable beside items, `0` for a verified-empty board, `—` when nothing is
-readable. Empty and verified-empty draw `沒有登記`; an unreadable host never draws it. 8 items drawn then `+N more`;
-at most 3 unreadable-host rows then `+N hosts n/a`. A refused `list` makes the card one `n/a（目錄無法列出：…）` and
-counts one error. The tail gets `WAIT N`, `WAIT N (D due)` or `WAIT ≥N` in front of the ctx, quota, cost and clock
+Title: `N`, `N · D due`, `≥N` when a host is unreadable or files are skipped (beside items, or `≥0` with none), `0` for a
+verified-empty board, `—` when nothing is readable. `沒有登記` is drawn for an empty board with no unreadable host and
+no skipped file; an unreadable host or a skipped file never draws it. 8 items drawn then `+N more`; at most 3
+unreadable-host rows then `+N hosts n/a`; then, when files are skipped, the last row `+N files not read` (dim). A refused
+`list` makes the card one `n/a（目錄無法列出：…）` and counts one error. The tail gets `WAIT N`, `WAIT N (D due)`, or
+`WAIT ≥N` / `WAIT ≥N (D due)` when a host is unreadable or files are skipped, in front of the ctx, quota, cost and clock
 segments, and none at 0 open items. When the SYNC segment (#29) shows it sits in front of WAIT:
 `SYNC -3 PULL · WAIT 1 · ctx 3% · 5h 23% · 7d 61%`. The 48-character trim drops from the end, so WAIT outlasts every
 segment but SYNC.
 Stale own copies (SCHEMA 5.3 point 6) are not repaired here: the card shows what the synced files say.
 
-Known limit, the 16-file cap is silent: `skipped` is computed by `collectWaiting` but nothing draws it, not the
-title, not a row, not the tail. With more than 16 matching names the ones that sort last by name are never read, so
-their open items are missing from the card and the tail, and the card can read `0` with 沒有登記 while an unread
-host has open items. Observed through the engine (89 columns, 17 valid host files, one open item): the item in the
-17th file gives the title `0`, the body 沒有登記 and a tail with no `WAIT`; the same item in the 16th file gives `1`
-and `WAIT 1`, as it does with 16 files in all. Not decided: whether to draw the skipped count or to raise the cap.
+Cap of 16 files (hub #104, decision 104-A; the cap stays 16). With more than 16 matching names the names that sort last
+by name are never read, so their open items are not on the card or in the tail. The skipped count is drawn, not hidden:
+the title reads `≥N` (`≥0` with no item), the last row reads `+N files not read`, and the tail reads `WAIT ≥N`; a
+skipped file never draws `沒有登記`. A skipped file is not a SYSTEM error, the same as an unreadable host: only a refused
+`list` counts. The count does not say which items are missing; raising the cap is a separate decision.
 
 ## Files the mod writes (format contract)
 
@@ -1061,13 +1064,18 @@ Card     Box width round gray paddingX=1 column               (Section: Box widt
 | 28-1 | merge, hub EXPECTED | `waiting.test.ts`: the hub `merged` set and winners at the reference now; closed wins, the larger host wins a tie, due is strictly over 604800 s, 0002 takes the newer text |
 | 28-2 | hub copies | `waiting.test.ts`: each embedded copy matches its pinned sha256 (commit 7b88598); a one-byte edit changes the hash |
 | 28-3 | item rules | `waiting.test.ts`: one case per SCHEMA 9 violation, each n/a with its reason; 200 emoji accepted; unknown keys ignored |
-| 28-4 | name filter and cap | `waiting.test.ts`: `waiting.json`, two-part names and `.tmp` leftovers never opened; 16 read, the rest skipped (`skipped` is not drawn: a known limit, see the WAITING card section) |
+| 28-4 | name filter and cap | `waiting.test.ts`: `waiting.json`, two-part names and `.tmp` leftovers never opened; 16 read, the rest skipped (drawn since 104, see the WAITING card section) |
 | 28-5 | AC1 empty states | `waiting.test.ts`: absent dir (list throws ENOENT, still 0), non-matching names, all closed, a truncated host beside an empty one reads `—`, not 0 |
 | 28-6 | card layout and rows | `waitingcard.test.ts`: band of one at 36/49/89 after ACTIVITY, before SYSTEM; DUE at the right edge; `+N more`; `≥N`; `—`; 沒有登記 never beside an unreadable host |
 | 28-7 | tail | `waitingcard.test.ts`: `WAIT N`, `(D due)`, `≥N`; none at 0 or unreadable; first segment, or second behind the SYNC segment when that shows (`SYNC -3 PULL · WAIT 1 · ctx 3%`; each alone leads; the 48-character trim drops the segments behind WAIT first, then WAIT, SYNC last); row off or master off gives none |
 | 28-8 | engine, captured bytes | `waitingcard.test.ts`: the producer capture drawn through `boot`; flipping the closer to open brings X back; rows file off reads no side file; CLAUDE_CONFIG_DIR honoured |
 | 28-9 | default on and the opt-out | `model.test.ts`: `waiting` is on for no file, `{}`, a file without the key and `1`; `false` and `0` switch it off. `waitingcard.test.ts`: no rows file and an empty synced dir read `0` with 沒有登記; a rows file without the key keeps the card and the `WAIT 2` segment. Its mutations are in 28-10 |
 | 28-10 | mutations (run once each, restored) | closed-wins, tie-break, `>=` due, name grammar, host check, exists-first, 16-file cap, control-char rule, link count, row-off gate (collector and tail), 沒有登記 beside down hosts: each turns exactly its named rows red. For 28-9, one change each, restored: (a) `'waiting'` put back into `OPT_IN` in `model.ts` (the row off until the file says boolean `true`) turns 8 tests red, no others: the `model.test.ts` test `waiting is on by default and off only for a falsy value in the rows file`, the two `on by default` engine tests, and the five `#8 row toggles file` tests built on `off()`, which expects every row but `fixture` on; (b) a strict `!== false` reading for `waiting` in `parseTogglesStrict` (so `0` no longer switches it off) turns that test red and no other; (c) the rows file's `waiting` key not read (so `false` cannot switch it off) turns 54 tests red: that test, the rows-file-off engine test and the pane tests that keep the card off with `"waiting":false`, in the world's seed or in their own rows file |
+| 104-1 | links protocol | `waiting.test.ts`: `ftp://` in `links[0]` is n/a with `links[0] 不是 http(s) URL` (green on the unchanged code; the guard that turns red when `URL_RE` relaxes to `[a-z]+:`) |
+| 104-2 | title, row and tail with skipped files | `waiting.test.ts`: `≥0` for skipped files alone, `≥1` beside an item, `0` and `—` unchanged. `waitingcard.test.ts`: `≥2` with `+2 files not read` last, `WAIT ≥2 (1 due)`, no segment at 0 open items |
+| 104-3 | engine, 17 files (16 read, the last by name skipped) | `waitingcard.test.ts`: `≥1`, `+1 files not read` last and `WAIT ≥1` at 36/49/89 columns; with no open item `≥0`, no 沒有登記, no WAIT; the `zed` item never drawn |
+| 104-4 | skipped files are not a SYSTEM error | `waitingcard.test.ts`: the same 17-file engine board draws no `N error(s)`; the guard that turns red when skipped counts as an error (mutant f) |
+| 104-5 | title, row order and tail with items, a host down and skipped | `waitingcard.test.ts`: `≥2` with the `hostb` n/a row above `+2 files not read` (last) and `WAIT ≥2`; red when the +N row is pushed ahead of the host rows. Not a guard for the title or the tail ignoring skipped: a host down makes both `≥` on its own (covered by 104-2 and 104-3) |
 
 ## Acceptance
 
