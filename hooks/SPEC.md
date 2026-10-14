@@ -1049,6 +1049,7 @@ Card     Box width round gray paddingX=1 column               (Section: Box widt
 | 104-2 | title, row and tail with skipped files | `waiting.test.ts`: `≥0` for skipped files alone, `≥1` beside an item, `0` and `—` unchanged. `waitingcard.test.ts`: `≥2` with `+2 files not read` last, `WAIT ≥2 (1 due)`, no segment at 0 open items |
 | 104-3 | engine, 17 files (16 read, the last by name skipped) | `waitingcard.test.ts`: `≥1`, `+1 files not read` last and `WAIT ≥1` at 36/49/89 columns; with no open item `≥0`, no 沒有登記, no WAIT; the `zed` item never drawn |
 | 104-4 | skipped files are not a SYSTEM error | `waitingcard.test.ts`: the same 17-file engine board draws no `N error(s)`; the guard that turns red when skipped counts as an error (mutant f) |
+| 104-5 | title, row order and tail with items, a host down and skipped | `waitingcard.test.ts`: `≥2` with the `hostb` n/a row above `+2 files not read` (last) and `WAIT ≥2`; red when the +N row is pushed ahead of the host rows. Not a guard for the title or the tail ignoring skipped: a host down makes both `≥` on its own (covered by 104-2 and 104-3) |
 
 ## Acceptance
 
