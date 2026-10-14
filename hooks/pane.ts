@@ -641,7 +641,7 @@ const waitingCard = (snap: Snap, width: number, inner: number, c: Ctx): Card => 
   const head = waitingHead(view)
   const value: Line = [head.count === '—' ? dim('—') : plain(head.count), ...(head.dueText ? [dim(' · '), seg(head.dueText, { color: 'yellow' })] : [])]
   const rows: CardRow[] = [split([titleSeg('WAITING')], value, inner)]
-  if (view.rows.length === 0 && view.down.length === 0) rows.push({ kind: 'split', parts: [[dim('沒有登記')]] })
+  if (view.rows.length === 0 && view.down.length === 0 && view.skipped === 0) rows.push({ kind: 'split', parts: [[dim('沒有登記')]] })
   for (const row of view.rows.slice(0, WAIT_SHOWN)) {
     rows.push(split([seg(row.age, { bold: true }), dim(` · ${row.date}`)], row.due ? [seg('DUE', { color: 'yellow' })] : [], inner))
     const lines = wrapWords(row.what.replace(BIDI_RE, ''), inner)
@@ -652,6 +652,7 @@ const waitingCard = (snap: Snap, width: number, inner: number, c: Ctx): Card => 
   if (view.total > WAIT_SHOWN && view.rows.length > 0) rows.push(moreRow(view.total - WAIT_SHOWN))
   for (const d of view.down.slice(0, WAIT_DOWN_SHOWN)) rows.push(...naRows(`${d.host} ${d.text}`, inner))
   if (view.down.length > WAIT_DOWN_SHOWN) rows.push({ kind: 'split', parts: [[], [dim(`+${view.down.length - WAIT_DOWN_SHOWN} hosts n/a`)]] })
+  if (view.skipped > 0) rows.push({ kind: 'split', parts: [[], [dim(`+${view.skipped} files not read`)]] })
   return { id: 'waiting', width, rows }
 }
 

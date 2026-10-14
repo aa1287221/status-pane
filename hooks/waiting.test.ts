@@ -255,6 +255,19 @@ describe('AC1 empty states', () => {
   })
 })
 
+describe('skipped files (hub #104, decision 104-A)', () => {
+  const view = (items: RawItem[], skipped: number, down: { host: string; text: string }[] = []) =>
+    waitingView({ items: items.map(i => ({ id: i.id, host: 'hosta', what: i.what, sinceSec: i.sinceSec })), openTotal: items.length, down, skipped }, NOW, 0)
+  const one: RawItem = { id: 'hosta-aaaa0001', state: 'open', updatedSec: 0, sinceSec: NOW / 1000 - 3600, what: 'x', closedBy: null }
+
+  test('the title: ≥N beside items and ≥0 for an empty board when files were skipped; 0 and — keep their meaning otherwise', () => {
+    expect(waitingHead(view([], 2))).toEqual({ count: '≥0', dueText: null })
+    expect(waitingHead(view([one], 1))).toEqual({ count: '≥1', dueText: null })
+    expect(waitingHead(view([], 0))).toEqual({ count: '0', dueText: null })
+    expect(waitingHead(view([], 2, [{ host: 'hostb', text: 'n/a（缺檔）' }]))).toEqual({ count: '—', dueText: null })
+  })
+})
+
 describe('item rules (SCHEMA 9): each violation makes that host n/a with its reason', () => {
   const cases: [string, Record<string, unknown>, string][] = [
     ['what missing', { what: undefined }, '缺少 what'],
@@ -266,6 +279,7 @@ describe('item rules (SCHEMA 9): each violation makes that host n/a with its rea
     ['links 6 entries', { links: Array.from({ length: 6 }, () => 'https://example.com/a') }, 'links 超過 5 個'],
     ['links with credentials', { links: ['https://u:p@e.com'] }, 'links[0] 不是 http(s) URL'],
     ['links javascript scheme', { links: ['javascript:x'] }, 'links[0] 不是 http(s) URL'],
+    ['links ftp scheme', { links: ['ftp://e.com/a'] }, 'links[0] 不是 http(s) URL'],
     ['links 301 chars', { links: ['https://e.com/' + 'a'.repeat(287)] }, 'links[0] 超過 300 個字元'],
     ['links with a space', { links: ['https://e.com/a b'] }, 'links[0] 不是 http(s) URL'],
     ['bad id (x-1)', { id: 'x-1' }, 'id 格式不合'],

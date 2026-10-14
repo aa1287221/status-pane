@@ -1,7 +1,7 @@
 // The WAITING board (SCHEMA.md kind `waiting`, sections 7.1 and 9): reads every host's synced file and merges
 // them. Pure except for the injected Io; imports only the reader and the state types, so model.ts and pane.ts can use it.
 
-import { readSideFile, sideFilePath } from './sidefile'
+import { parseStamp as parseStampOf, readSideFile, sideFilePath } from './sidefile'
 import type { SideIo, SideLoc, SideOk } from './sidefile'
 import type { Res, Snap, WaitingData, WaitingDown } from './state'
 
@@ -21,7 +21,7 @@ export type WaitingIo = SideIo & { list: (path: string) => Promise<{ name: strin
 export type RawItem = { id: string; state: 'open' | 'closed'; updatedSec: number; sinceSec: number; what: string; closedBy: string | null }
 export type Merged = { id: string; state: 'open' | 'closed'; host: string; updatedSec: number; sinceSec: number; what: string }
 export type WaitingRow = { id: string; host: string; age: string; date: string; due: boolean; what: string }
-export type WaitingView = { rows: WaitingRow[]; total: number; due: number; down: WaitingDown[] }
+export type WaitingView = { rows: WaitingRow[]; total: number; due: number; down: WaitingDown[]; skipped: number }
 
 const isControl = (cp: number): boolean => cp <= 0x1f || (cp >= 0x7f && cp <= 0x9f) || cp === 0x2028 || cp === 0x2029
 const has = (o: object, key: string): boolean => Object.prototype.hasOwnProperty.call(o, key)
@@ -55,8 +55,6 @@ const itemOf = (raw: unknown, n: number): RawItem | string => {
   if (raw.closed_by !== null && typeof raw.closed_by !== 'string') return at('closed_by 不是字串或 null')
   return { id: raw.id, state: raw.state, updatedSec, sinceSec, what: raw.what, closedBy: raw.closed_by as string | null }
 }
-
-import { parseStamp as parseStampOf } from './sidefile'
 
 /** The items of an `ok` file (its `data.items`), or the first violation as `格式錯誤：…`. */
 export const itemsOf = (r: SideOk): Res<RawItem[]> => {
@@ -155,13 +153,14 @@ export const waitingView = (data: WaitingData, nowMs: number, tzMin = 0): Waitin
     const ageSec = nowSec - it.sinceSec
     return { id: it.id, host: it.host, age: ageOf(Math.max(0, ageSec)), date: dateOf(it.sinceSec, tzMin), due: ageSec > DUE_SEC, what: it.what }
   })
-  return { rows, total: data.openTotal, due: rows.filter(r => r.due).length, down: data.down }
+  return { rows, total: data.openTotal, due: rows.filter(r => r.due).length, down: data.down, skipped: data.skipped }
 }
 
-/** The title value: `0` for a verified-empty board, `—` when nothing is readable, `≥N` when some host is unreadable. */
+/** The title value: `≥N` when a host is unreadable or files were skipped (the count is partial); `—` when nothing is readable. */
 export const waitingHead = (v: WaitingView): { count: string; dueText: string | null } => {
-  if (v.total === 0) return { count: v.down.length > 0 ? '—' : '0', dueText: null }
-  return { count: `${v.down.length > 0 ? '≥' : ''}${v.total}`, dueText: v.due > 0 ? `${v.due} due` : null }
+  const partial = v.down.length > 0 || v.skipped > 0
+  if (v.total === 0) return { count: v.down.length > 0 ? '—' : partial ? '≥0' : '0', dueText: null }
+  return { count: `${partial ? '≥' : ''}${v.total}`, dueText: v.due > 0 ? `${v.due} due` : null }
 }
 
 /** The prompt tail segment, or null when there is no open item to count. */
@@ -170,6 +169,6 @@ export const waitingHint = (snap: Snap, nowMs: number): string | null => {
   if (!r || !r.ok) return null
   const v = waitingView(r.v, nowMs)
   if (v.total === 0) return null
-  const count = `${v.down.length > 0 ? '≥' : ''}${v.total}`
+  const count = `${v.down.length > 0 || v.skipped > 0 ? '≥' : ''}${v.total}`
   return `WAIT ${count}${v.due > 0 ? ` (${v.due} due)` : ''}`
 }
