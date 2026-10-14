@@ -95,6 +95,8 @@ export type RefreshIn = {
   prevHooks: HookVerdicts | null
   /** True when the MCP status refresher may be started again. */
   mcpDue: boolean
+  /** The last SYNC producer refresh of this mod run failed; a stale SYNC file counts only then (#123). */
+  syncFailed: () => boolean
   /** False once a newer refresh has replaced this one: it must not write over it. */
   isCurrent: () => boolean
 }
@@ -568,9 +570,9 @@ export const refresh = async (io: Io, input: RefreshIn): Promise<RefreshOut> => 
   if (on.agents) snap.dispatch = agentsRes.ok ? dispatchOf(agentsRes.v.text, input.now, warn) : agentsRes
   if (on.waiting) snap.waiting = waiting.ok ? { ok: true, v: waiting.v } : { ok: false, why: naReason(waiting.why) }
   if (on.sync) snap.sync = syncSide.ok ? syncOf(syncSide.v, input.now / 1000) : { ok: false, why: naReason(syncSide.why) }
-  // a SYNC n/a by design is shown but not counted: no file (no producer here yet), or an aged one (between hook runs);
-  // a row that failed to collect is a fault
-  const syncByDesign = syncSide.ok && (syncSide.v.verdict === 'missing' || syncSide.v.verdict === 'stale')
+  // a SYNC n/a by design is shown but not counted: no file (no producer here yet), or an aged one unless the last
+  // producer refresh failed (#123); a row that failed to collect is a fault
+  const syncByDesign = syncSide.ok && (syncSide.v.verdict === 'missing' || (syncSide.v.verdict === 'stale' && !input.syncFailed()))
   // no tracker file is by design too (the first dispatch writes it): the in-flight row shows n/a but is not counted;
   // an unreadable or corrupt file is a fault
   const dispatchByDesign = agentsRes.ok && agentsRes.v.text === null

@@ -11,6 +11,10 @@ const REPORT_MAX = 300
 
 export type SyncRunInit = { stdin: string; timeoutMs: number }
 export type SyncRunResult = { exitCode: number; stdout: string; stderr: string }
+/** The last finished refresh of this mod run; the caller keeps it, so a re-arm does not forget it (#123). */
+export type SyncRefreshState = { failed: boolean }
+/** `tried` false: the card is off, which is no attempt; otherwise `error` is the reason, null for a clean run. */
+type Attempt = { tried: false } | { tried: true; error: string | null }
 
 /** What a refresh needs from the engine. register.tsx builds it from `$`; the tests build it from a fake clock. */
 export type SyncDeps = {
@@ -53,7 +57,7 @@ const runError = (err: unknown): string => {
 }
 
 /** Starts the period. A tick that finds the last run unfinished is skipped and logged; the tick after it runs. */
-export const startSyncRefresh = (deps: SyncDeps): { cancel: () => void } => {
+export const startSyncRefresh = (deps: SyncDeps, state: SyncRefreshState): { cancel: () => void } => {
   let stopped = false
   let period: { cancel: () => void } | null = null
   let busy = false
@@ -68,14 +72,14 @@ export const startSyncRefresh = (deps: SyncDeps): { cancel: () => void } => {
     }
   }
 
-  /** One start, or the reason it did not happen; a clean run answers null and logs nothing. */
-  const attempt = async (): Promise<string | null> => {
-    if (!(await deps.wanted())) return null
+  /** One start; a card that is off is no attempt at all. */
+  const attempt = async (): Promise<Attempt> => {
+    if (!(await deps.wanted())) return { tried: false }
     const path = producerPath(await deps.configDir(), await deps.home())
-    if (path === null) return 'sync-status: neither CLAUDE_CONFIG_DIR nor HOME is set, producer not started'
-    if (!(await deps.exists(path))) return `sync-status: producer missing at ${path}`
+    if (path === null) return { tried: true, error: 'sync-status: neither CLAUDE_CONFIG_DIR nor HOME is set, producer not started' }
+    if (!(await deps.exists(path))) return { tried: true, error: `sync-status: producer missing at ${path}` }
     const res = await deps.run(producerArgv(path), { stdin: '{}', timeoutMs: SYNC_RUN_TIMEOUT_MS })
-    return res.exitCode === 0 ? null : `sync-status: producer exited ${res.exitCode}: ${report(res)}`
+    return { tried: true, error: res.exitCode === 0 ? null : `sync-status: producer exited ${res.exitCode}: ${report(res)}` }
   }
 
   const onTick = (): void => {
@@ -87,12 +91,15 @@ export const startSyncRefresh = (deps: SyncDeps): { cancel: () => void } => {
     }
     busy = true
     attempt().then(
-      text => {
+      r => {
         busy = false
-        if (text !== null) deps.log(text)
+        if (!r.tried) return
+        state.failed = r.error !== null
+        if (r.error !== null) deps.log(r.error)
       },
       err => {
         busy = false
+        state.failed = true
         deps.log(`sync-status: producer run failed: ${runError(err)}`)
       },
     )
