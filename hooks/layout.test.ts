@@ -2422,20 +2422,26 @@ describe('the header carries what must not be missed when the cards below are of
 })
 
 describe('cards are framed at every width, in every room', () => {
-  test('never borderless at any width from 20 to 122 and any room from 5 to 60 rows', () => {
-    for (let columns = MIN_W + 2; columns <= 122; columns += 3) {
-      for (let rows = 5; rows <= 60; rows += 11) {
-        for (const snap of [makeSnap(), makeSnap({ errors: 2 })]) {
+  // one sweep per test nears the 5 s per-test limit under load, so it is cut in three
+  const framedSweep = (from: number, to: number) => {
+    for (let columns = from; columns <= to; columns += 3) {
+      for (const snap of [makeSnap(), makeSnap({ errors: 2 })]) {
+        // the rows-free render does not depend on the room: draw it once per width and snapshot
+        const expected = textAt(snap, columns)
+        for (let rows = 5; rows <= 60; rows += 11) {
           const view = { columns, nowMs: MOCKUP_AT, tzMin: 0, raster: true, cpuHist: HIST, rows } as PaneView
           const lines = renderTree(layoutTree(paneLayout(snap, view), FAKE_ELS) as unknown as Node, columns)
           expect(lines.some(l => l.includes('↓ more')), `${columns} x ${rows}`).toBe(false)
           expect(lines.filter(l => l.includes('╭')).length, `${columns} x ${rows}`).toBe(lines.filter(l => l.includes('╰')).length)
           expect(lines.filter(l => l.includes('╭')).length).toBeGreaterThanOrEqual(4)
-          expect(lines).toEqual(textAt(snap, columns))
+          expect(lines).toEqual(expected)
         }
       }
     }
-  })
+  }
+  test('never borderless from 22 to 58 columns and any room from 5 to 60 rows', () => framedSweep(MIN_W + 2, 58))
+  test('never borderless from 61 to 97 columns and any room from 5 to 60 rows', () => framedSweep(61, 97))
+  test('never borderless from 100 to 122 columns and any room from 5 to 60 rows', () => framedSweep(100, 122))
 
   test('the narrow tier leaves one blank row between its cards, and the medium and wide tiers none', () => {
     const blanks = (columns: number) => textAt(makeSnap(), columns).filter(l => l === '').length
