@@ -24,6 +24,7 @@ export type RowKey =
   | 'sync'
   | 'fixture'
   | 'waiting'
+  | 'hygiene'
 
 /** `~/.claude/cc-statusline-rows.json`: master switch plus one flag per row (`fixture` is off unless the file turns it on with the boolean true). */
 export type Toggles = { enabled: boolean; rows: Record<RowKey, boolean> }
@@ -122,6 +123,12 @@ export type MemInfo = { usedKb: number; totalKb: number; pct: number }
 /** The SYNC card (SCHEMA.md kind `sync-status`, #29): ahead and behind of sync-data-v2 against its last fetch; stamps are epoch seconds or null. */
 export type SyncData = { branch: string; upstream: string; ahead: number; behind: number; lastPushSec: number | null; lastFetchSec: number | null; observedAtSec: number }
 
+/** One warning the commit or push hook recorded; `source` is `subtask` when the hook ran inside a subtask (kind `git-hygiene`, #151). */
+export type HygieneEntry = { event: string; repo: string; firstLine: string; lines: string[]; atSec: number; ageSec: number; source: 'main' | 'subtask' }
+
+/** The GIT HYGIENE card: the entries the record holds, newest first (1 to 5). */
+export type HygieneData = { entries: HygieneEntry[] }
+
 /** Everything the pane and the tail draw from; written by one refresh. */
 export type Snap = {
   at: number
@@ -152,6 +159,8 @@ export type Snap = {
   waiting?: Res<WaitingData>
   /** The SYNC card and tail hint; absent unless the `sync` row is on. */
   sync?: Res<SyncData>
+  /** The GIT HYGIENE card (kind `git-hygiene`, #151); absent unless the `hygiene` row is on. */
+  hygiene?: Res<HygieneData>
   /** What the settings said of the tracker hooks at this refresh; kept when a later read fails. */
   hooks: HookVerdicts
 }

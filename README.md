@@ -4,6 +4,7 @@ Claude Code 的 function-hooks mod，用來取代原生的 `statusLine`（cc-sta
 
 - **右側 pane**：卡片式儀表板。卡片用引擎畫的 `Box`，進度條用 truecolor 的 `Raster`。卡片包括 PROGRESS（NOW 列：目前的工具與經過時間；BG 列：背景 shell、排程等了多久；權限對話框：-p 下 PermissionRequest 沒有觸發、TUI 還沒驗，PERM 列固定印 `n/a（原因）`）、CONTEXT、5H、7D、COST、GIT、ACTIVITY、SYSTEM、SYNC，依寬度自動排成 1、2 或 3 欄，超出高度時用滑鼠捲動。
 - **ACTIVITY 的 in-flight 列**：本 session 還在跑的 subagent 數，不設固定上限。要警示就設環境變數 `STATUS_PANE_INFLIGHT_WARN=<正整數>`（可放在 `settings.json` 的 `env`），超過該數時變紅色 `N over T`；沒設、空白、0、負數或非整數都不警示。標 running 超過 30 分鐘的列為 `stale`，不計入。
+- **GIT HYGIENE 卡**（kind `git-hygiene`，#151）：列出本機最近的重要警告，最多 5 筆，最新在最上面，跨所有 session 共用，每筆顯示距今多久、repo 名稱與警告第一行；來自子任務（包括 workflow 子任務）的標 `背景`，超過 30 分鐘的標 `舊` 並仍顯示；預設開啟，`"hygiene": false` 關閉。只記重要警告（NOT RECORDED、PARTIAL STAGING、NOT ATTRIBUTABLE、push 的 WARN）：只有 BRANCH、REF AGE、RENAMES、NOTE、OK、SKIPPED 或 N/A 的執行不會寫入，檔案維持原狀。沒有紀錄時顯示「還沒有警告紀錄」；格式錯誤或收集失敗時顯示讀取器的 `n/a（原因）` 並算一個錯誤。hook 自己的輸出仍然印出每一行。
 - **prompt 下方提示行的尾巴**：一行精簡資訊，例如 `ctx 4% · 5h 20% · 7d 74% · $0.33 · 21:09`，被 `/diff` 或其他 pane 擋住時仍看得到。
 
 詳細規格、資料對應與測試路徑矩陣在 [`hooks/SPEC.md`](hooks/SPEC.md)。
