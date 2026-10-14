@@ -1,8 +1,6 @@
 // The mod's own start of the sync-status producer (#91): the hooks write the file only on SessionStart and Stop, so an
 // idle session lets it pass the 900 s TTL. The producer runs as the hook runs it, with --print so its exit code is told.
 
-import { why } from './model'
-
 /** Between two starts. The first one comes this long after the mod starts, since SessionStart has just written the file. */
 export const SYNC_REFRESH_MS = 300_000
 /** The host ends a run after this long and the call rejects; the producer's own git calls share an 8 s budget. */
@@ -43,6 +41,14 @@ const report = (res: SyncRunResult): string => {
     .filter(Boolean)
     .join(' | ')
   if (text === '') return '(no output)'
+  return text.length > REPORT_MAX ? `${text.slice(0, REPORT_MAX - 3)}...` : text
+}
+
+/** A run that rejected: the first line of its message, minus the engine's `<plugin>: $.process.run(<argv0>) ` prefix. */
+const runError = (err: unknown): string => {
+  const raw = err instanceof Error ? err.message : String(err)
+  const line = (raw.split('\n')[0] ?? '').replace(/^[\w-]+: \$\.process\.run\([^)]*\) /, '')
+  const text = line || '(no message)'
   return text.length > REPORT_MAX ? `${text.slice(0, REPORT_MAX - 3)}...` : text
 }
 
@@ -87,7 +93,7 @@ export const startSyncRefresh = (deps: SyncDeps): { cancel: () => void } => {
       },
       err => {
         busy = false
-        deps.log(`sync-status: cannot start the producer: ${why(err)}`)
+        deps.log(`sync-status: producer run failed: ${runError(err)}`)
       },
     )
   }
