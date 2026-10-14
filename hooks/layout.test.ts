@@ -1661,7 +1661,8 @@ describe('no line passes its box at any width from 20 to 120', () => {
     ['one with very long text and big numbers', NASTY],
   ] as const) {
     for (const raster of [true, false]) {
-      test(`${name}, ${raster ? 'with' : 'without'} Rasters`, () => {
+      // load 68 in the whole-suite run: 2.5 s (5 s limit); 15 s here, the assertions are unchanged
+      test(`${name}, ${raster ? 'with' : 'without'} Rasters`, { timeoutMs: 15_000 }, () => {
         for (let columns = MIN_W + 2; columns <= 122; columns++) {
           const tree = treeAt(snap, columns, { raster })
           expect(findOverflow(tree, columns)).toEqual([])
@@ -2091,7 +2092,8 @@ describe('the narrowest panes in a directory that is no repository', () => {
     expect(dim.props).toMatchObject({ dimColor: true })
   })
 
-  test('the header breaks only between segments, so no row starts or ends with the separator, at any width from 20 to 60', () => {
+  // load 68 in the whole-suite run: 4.0 s (5 s limit); 15 s here, the assertions are unchanged
+  test('the header breaks only between segments, so no row starts or ends with the separator, at any width from 20 to 60', { timeoutMs: 15_000 }, () => {
     const models = [
       { name: 'Opus 5.5', version: '2.1.295', effort: 'xhigh' },
       { name: 'Opus 5.5 [1m]', version: '2.1.295', effort: 'medium' },
@@ -2422,20 +2424,27 @@ describe('the header carries what must not be missed when the cards below are of
 })
 
 describe('cards are framed at every width, in every room', () => {
-  test('never borderless at any width from 20 to 122 and any room from 5 to 60 rows', () => {
-    for (let columns = MIN_W + 2; columns <= 122; columns += 3) {
-      for (let rows = 5; rows <= 60; rows += 11) {
-        for (const snap of [makeSnap(), makeSnap({ errors: 2 })]) {
+  // one sweep per test nears the 5 s per-test limit under load, so it is cut in three
+  const framedSweep = (from: number, to: number) => {
+    for (let columns = from; columns <= to; columns += 3) {
+      for (const snap of [makeSnap(), makeSnap({ errors: 2 })]) {
+        // the rows-free render does not depend on the room: draw it once per width and snapshot
+        const expected = textAt(snap, columns)
+        for (let rows = 5; rows <= 60; rows += 11) {
           const view = { columns, nowMs: MOCKUP_AT, tzMin: 0, raster: true, cpuHist: HIST, rows } as PaneView
           const lines = renderTree(layoutTree(paneLayout(snap, view), FAKE_ELS) as unknown as Node, columns)
           expect(lines.some(l => l.includes('↓ more')), `${columns} x ${rows}`).toBe(false)
           expect(lines.filter(l => l.includes('╭')).length, `${columns} x ${rows}`).toBe(lines.filter(l => l.includes('╰')).length)
           expect(lines.filter(l => l.includes('╭')).length).toBeGreaterThanOrEqual(4)
-          expect(lines).toEqual(textAt(snap, columns))
+          expect(lines).toEqual(expected)
         }
       }
     }
-  })
+  }
+  test('never borderless from 22 to 58 columns and any room from 5 to 60 rows', () => framedSweep(MIN_W + 2, 58))
+  // load 68 in the whole-suite run: 2.5 s (5 s limit); 15 s here, the assertions are unchanged
+  test('never borderless from 61 to 97 columns and any room from 5 to 60 rows', { timeoutMs: 15_000 }, () => framedSweep(61, 97))
+  test('never borderless from 100 to 122 columns and any room from 5 to 60 rows', () => framedSweep(100, 122))
 
   test('the narrow tier leaves one blank row between its cards, and the medium and wide tiers none', () => {
     const blanks = (columns: number) => textAt(makeSnap(), columns).filter(l => l === '').length

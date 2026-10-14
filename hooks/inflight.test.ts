@@ -472,7 +472,8 @@ describe('through the engine: Stop snapshot, tool.call starts and notifications'
   const NOTE = (id: string) =>
     ({ text: 'done', origin: { kind: 'task-notification' }, isExpanded: false, task: { id, status: 'completed' } }) as never
 
-  test('a fresh session reads n/a for BG at every width, and says why in /progress', async ($, on) => {
+  // 15 s: normal 0.7 s (load 2-4), 5.2 s at load 70-84
+  test('a fresh session reads n/a for BG at every width, and says why in /progress', { timeoutMs: 15_000 }, async ($, on) => {
     await boot($, on, w => (w.now = T0))
     for (const { columns } of WIDTHS) {
       const body = await bgBody($, columns)
@@ -482,7 +483,8 @@ describe('through the engine: Stop snapshot, tool.call starts and notifications'
   })
 
   for (const { columns, tier } of WIDTHS) {
-    test(`${tier} (bodyColumns ${columns}): a background shell started this turn waits from its call, and is gone when its notification comes`, async ($, on) => {
+    // load 68 in the whole-suite run: 3.8 s (5 s limit); 15 s here, the assertions are unchanged
+    test(`${tier} (bodyColumns ${columns}): a background shell started this turn waits from its call, and is gone when its notification comes`, { timeoutMs: 15_000 }, async ($, on) => {
       const { world, clock } = await boot($, on, w => (w.now = T0))
       const inner = columns - 2 - 4
       await $.tool.call({ tool: 'Bash', command: 'sleep 600', run_in_background: true })
@@ -617,7 +619,8 @@ describe('through the engine: Stop snapshot, tool.call starts and notifications'
     expect(await stopSays($, b, T0 + 60_000, [bt()])).toContain('BG   shell 1m00s')
   })
 
-  test('63 keyed starts and an open one after a veto push the veto out: the cut start list gives up the count rule', async ($, on) => {
+  // 15 s: normal 0.7 s (load 2-4), 4.5 s at load 70-84
+  test('63 keyed starts and an open one after a veto push the veto out: the cut start list gives up the count rule', { timeoutMs: 15_000 }, async ($, on) => {
     const b = await boot($, on, w => (w.now = T0))
     await launch($, b, T0, { tool: 'Bash', command: 'sub', run_in_background: true, agentId: 'a1' })
     let n = 0

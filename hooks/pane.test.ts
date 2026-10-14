@@ -93,7 +93,8 @@ describe('session.start', () => {
 })
 
 describe('#10 pane through the engine', () => {
-  test('the first refresh fills every card, on every surface, wide and medium', async ($, on) => {
+  // load 68 in the whole-suite run: 4.6 s (5 s limit); 15 s here, the assertions are unchanged
+  test('the first refresh fills every card, on every surface, wide and medium', { timeoutMs: 15_000 }, async ($, on) => {
     await boot($, on)
 
     for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
@@ -139,7 +140,8 @@ describe('#10 pane through the engine', () => {
     expect(parts.footer).toEqual([])
   })
 
-  test('the timer draws a new snapshot every 30 s', async ($, on) => {
+  // 15 s: normal 0.9 s (load 2-4), 2.8 s at load 70-84
+  test('the timer draws a new snapshot every 30 s', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, advance, clock } = await boot($, on)
     expect(world.usageCalls).toBe(1)
 
@@ -156,7 +158,7 @@ describe('#10 pane through the engine', () => {
 describe('the CPU history', () => {
   const STAT = (idle: number, busy: number) => `cpu  ${busy} 0 0 ${idle} 0 0 0 0 0 0\ncpu0 1 1 1 1 1 1 1 0 0 0\n`
   /** A machine whose counters start at a known place, and a way to let `share` percent of the next 100 ticks be busy. */
-  const machine = (world: World, advance: (ms: number) => Promise<void>, clock: { settle: () => Promise<void> }) => {
+  const machine = (world: World, clock: { advance: (ms: number) => Promise<void>; settle: () => Promise<void> }) => {
     let idle = 1000
     let busy = 0
     return {
@@ -165,14 +167,16 @@ describe('the CPU history', () => {
         idle += 100 - share
         busy += share
         world.files.set('/proc/stat', STAT(idle, busy))
-        await advance(30_000)
+        // one 30 s step: the fixture's 1 s steps only add work, and the refresh tick falls on this mark
+        world.now += 30_000
+        await clock.advance(30_000)
         await clock.settle()
       },
     }
   }
   const boot0 = async ($: Engine, on: Parameters<typeof boot>[1]) => {
     const up = await boot($, on, w => w.files.set('/proc/stat', STAT(1000, 0)))
-    return { ...up, cpu: machine(up.world, up.advance, up.clock) }
+    return { ...up, cpu: machine(up.world, up.clock) }
   }
   /** The chart's two rows in the SYSTEM card at `columns`: the row above the label line, and the label line itself. */
   const chart = async ($: Engine, columns = 49) => {
@@ -182,7 +186,8 @@ describe('the CPU history', () => {
   }
   const systemOf = async ($: Engine, columns = 49, surface: 'terminal' | 'desktop' = 'terminal') => cardOf(await paneView($, columns, surface), 'SYSTEM').body
 
-  test('the first reading has no share to draw and adds no sample; each reading after adds the one it made', async ($, on) => {
+  // 15 s: normal 0.9 s (load 2-4), 2.7 s at load 70-84
+  test('the first reading has no share to draw and adds no sample; each reading after adds the one it made', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, cpu } = await boot0($, on)
     expect(cpuHistory(world)).toEqual([])
     expect(world.stateSets.filter(k => k === 'cpuHist')).toEqual([])
@@ -208,7 +213,8 @@ describe('the CPU history', () => {
     expect(top).toBe(`${' '.repeat(22)}${'░'.repeat(15)}█`)
   })
 
-  test('a reading that failed adds no sample, and the next one is measured from the last that worked', async ($, on) => {
+  // 15 s: normal 0.7 s (load 2-4), 3.0 s at load 70-84
+  test('a reading that failed adds no sample, and the next one is measured from the last that worked', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, advance, clock, cpu } = await boot0($, on)
     await cpu.read(50)
 
@@ -224,11 +230,16 @@ describe('the CPU history', () => {
     expect((await chart($)).line).toBe(pair('cpu', '░░░░░░░░░░░░░░██ 100%', 43))
   })
 
-  test('the ring keeps the last 16 readings', async ($, on) => {
+  // 15 s: normal 1.8 s (load 2-4), 2.7 s at load 70-84
+  test('the ring keeps the last 16 readings', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, cpu } = await boot0($, on)
-    for (let i = 1; i <= 20; i++) await cpu.read(i * 5)
-
-    expect(cpuHistory(world)).toEqual(Array.from({ length: 16 }, (_, i) => (i + 5) * 5))
+    // the ring a longer run would have left: the next readings must push the oldest out one by one
+    const seeded = Array.from({ length: 16 }, (_, i) => (i + 1) * 5)
+    world.readOnce.set('cpuHist', seeded)
+    await cpu.read(50)
+    expect(cpuHistory(world)).toEqual([...seeded.slice(1), 50])
+    await cpu.read(100)
+    expect(cpuHistory(world)).toEqual([...seeded.slice(2), 50, 100])
     expect((await chart($)).line).toMatch(/^cpu {2,}\S{16} 100%$/)
   })
 
@@ -608,7 +619,8 @@ describe('#14 effort', () => {
     expect(world.reads).not.toContain(EFFORT_FILE)
   })
 
-  test('a classic hook input carries the level, and the newest one wins', async ($, on) => {
+  // 15 s: normal 0.3 s (load 2-4), 4.4 s at load 70-84
+  test('a classic hook input carries the level, and the newest one wins', { timeoutMs: 15_000 }, async ($, on) => {
     const { advance, clock } = await boot($, on, noEnv)
 
     await $.classic.PostToolUse(postToolUse({ effort: { level: 'xhigh' } }))
@@ -689,7 +701,8 @@ describe('#14 effort', () => {
       expect(await modelRow($)).toBe('Opus 5.5 · medium · v2.1.294')
     })
 
-    test('with no top-level level the modelSettings key that is the longest prefix of the model id wins', async ($, on) => {
+    // 15 s: normal 0.3 s (load 2-4), 4.2 s at load 70-84
+    test('with no top-level level the modelSettings key that is the longest prefix of the model id wins', { timeoutMs: 15_000 }, async ($, on) => {
       const modelSettings = {
         'claude-opus': { effortLevel: 'low' },
         'claude-opus-5': { effortLevel: 'high' },
@@ -839,7 +852,8 @@ describe('R2 R16 R26 the stale marks repaint without a refresh', () => {
     await ui.unmount()
   })
 
-  test('a refresh writes its own marks anew, so a live timer never lets a pane go stale', async ($, on) => {
+  // 15 s: normal 0.3 s (load 2-4), 4.2 s at load 70-84
+  test('a refresh writes its own marks anew, so a live timer never lets a pane go stale', { timeoutMs: 15_000 }, async ($, on) => {
     const { advance, clock } = await boot($, on)
     const ui = await mountPane($)
     for (let i = 0; i < 4; i++) {
@@ -863,7 +877,8 @@ describe('R2 R16 R26 the stale marks repaint without a refresh', () => {
     await ui.unmount()
   })
 
-  test('the next snapshot cancels the timers of the last one, so a live refresh leaves nothing to fire', async ($, on) => {
+  // 15 s: normal 0.2 s (load 2-4), 4.3 s at load 70-84
+  test('the next snapshot cancels the timers of the last one, so a live refresh leaves nothing to fire', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, advance, clock } = await boot($, on)
     await advance(95_000)
     await clock.settle()

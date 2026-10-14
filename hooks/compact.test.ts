@@ -179,7 +179,8 @@ const stateOf = (w: { stateValues: Map<string, unknown> }) => w.stateValues.get(
 
 describe('engine: the measure hook', () => {
   // E1: observe is the default; it computes and shows, and calls nothing
-  test('default observe: no suggest call, the state holds what it would send', async ($, on) => {
+  // load 68 in the whole-suite run: 4.6 s (5 s limit); 15 s here, the assertions are unchanged
+  test('default observe: no suggest call, the state holds what it would send', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, measure } = await setup($, on)
     await measure(650_000)
     expect(SENT.length).toBe(0)
@@ -188,7 +189,8 @@ describe('engine: the measure hook', () => {
   })
 
   // E2: suggest mode sends once per crossing
-  test('suggest mode: one call with the fixed text; a repeat is silent; a compact then a new crossing sends again', async ($, on) => {
+  // 15 s: normal 0.7 s (load 2-4), 4.2 s at load 70-84
+  test('suggest mode: one call with the fixed text; a repeat is silent; a compact then a new crossing sends again', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, measure } = await setup($, on, { env: { STATUS_PANE_CTX_SUGGEST: '1' } })
     await measure(650_000)
     await measure(660_000)
@@ -217,7 +219,8 @@ describe('engine: the measure hook', () => {
   })
 
   // E5: silent on irrelevant input
-  test('a measure that did not change context writes nothing', async ($, on) => {
+  // 15 s: normal 0.8 s (load 2-4), 2.0 s at load 70-84
+  test('a measure that did not change context writes nothing', { timeoutMs: 15_000 }, async ($, on) => {
     const { world, measure } = await setup($, on, { env: { STATUS_PANE_CTX_SUGGEST: '1' } })
     await measure(650_000, ['cost', 'rateLimits'])
     expect(world.stateSets).not.toContain('compact')

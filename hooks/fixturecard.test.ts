@@ -108,7 +108,8 @@ describe('the fixture card: side file to card through the engine', () => {
   }
 
   for (const { columns, tier } of WIDTHS) {
-    test(`${tier} (bodyColumns ${columns}): the count of a fresh file, on every surface`, async ($, on) => {
+    // load 68 in the whole-suite run: 3.6 s (5 s limit); 15 s here, the assertions are unchanged
+    test(`${tier} (bodyColumns ${columns}): the count of a fresh file, on every surface`, { timeoutMs: 15_000 }, async ($, on) => {
       await boot($, on, withFile(valid))
       for (const surface of SURFACES) {
         const parts = await paneView($, columns, surface)

@@ -283,7 +283,8 @@ describe('the WAITING card: side files through the engine', () => {
     w.files.set(`${SIDE}/waiting.hostb.json`, hostb)
   }
 
-  test('the captured producer bytes: Y and Z drawn with days and start dates, X hidden, the tail counts 2', async ($, on) => {
+  // load 68 in the whole-suite run: 3.5 s (5 s limit); 15 s here, the assertions are unchanged
+  test('the captured producer bytes: Y and Z drawn with days and start dates, X hidden, the tail counts 2', { timeoutMs: 15_000 }, async ($, on) => {
     await boot($, on, w => captured(w))
     for (const columns of [36, 49, 89]) {
       const card = cardOf(await paneView($, columns), 'WAITING')
@@ -296,7 +297,8 @@ describe('the WAITING card: side files through the engine', () => {
     expect(await hintText($)).toContain('WAIT 2')
   })
 
-  test('a day past 7 days the same captured board shows both as due', async ($, on) => {
+  // load 68 in the whole-suite run: 3.0 s (5 s limit); 15 s here, the assertions are unchanged
+  test('a day past 7 days the same captured board shows both as due', { timeoutMs: 15_000 }, async ($, on) => {
     await boot($, on, w => {
       captured(w)
       w.now = REF_NOW + 7 * DAY
@@ -306,13 +308,15 @@ describe('the WAITING card: side files through the engine', () => {
     expect(await hintText($)).toContain('WAIT 2 (2 due)')
   })
 
-  test('the producer control: flipping hostb closer to open brings X back, so the sample discriminates', async ($, on) => {
+  // 15 s: normal 0.9 s (load 2-4), 3.2 s at load 70-84
+  test('the producer control: flipping hostb closer to open brings X back, so the sample discriminates', { timeoutMs: 15_000 }, async ($, on) => {
     const hostb = CAPTURE['waiting.hostb.json']!.lines.join('\n').replace('"state": "closed"', '"state": "open"') + '\n'
     await boot($, on, w => captured(w, hostb))
     expect(cardOf(await paneView($, 89), 'WAITING').body.join('\n')).toContain('X waiting')
   })
 
-  test('the rows file switches the card and its segment off: no side file is read', async ($, on) => {
+  // load 68 in the whole-suite run: 2.6 s (5 s limit); 15 s here, the assertions are unchanged
+  test('the rows file switches the card and its segment off: no side file is read', { timeoutMs: 15_000 }, async ($, on) => {
     const { world } = await boot($, on, w => {
       captured(w)
       w.files.set(ROWS_FILE, '{"waiting":false}')

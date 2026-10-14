@@ -45,21 +45,26 @@ const BREAKPOINTS = [
 ] as const
 
 describe('the kit mounts the pane on every surface at the three breakpoints', () => {
+  // one boot and two mounts per test: a mount costs about 0.15 s, so the four surfaces are split in two
   for (const { columns, name, cards } of BREAKPOINTS) {
-    test(`bodyColumns ${columns} (${name}): the tree validates and holds the cards of that breakpoint`, async ($, on) => {
-      await boot($, on)
-      for (const surface of SURFACES) {
-        // the mount resolves only when the surface's table accepts every element and prop of the tree
-        const ui = await mountPane($, columns, surface)
-        const root = await ui.drawn()
-        expect(root).toMatchObject({ type: 'Box', props: { flexDirection: 'column', paddingX: 1 } })
-        expect(paneParts(root, columns).cards.map(c => [c.title, c.width])).toEqual(cards)
-        await ui.unmount()
-      }
-    })
+    for (const [half, surfaces] of [['terminal and desktop', SURFACES.slice(0, 2)], ['vscode and mobile', SURFACES.slice(2)]] as const) {
+      // load 68 in the whole-suite run: 3.8 s (5 s limit); 15 s here, the assertions are unchanged
+      test(`bodyColumns ${columns} (${name}), ${half}: the tree validates and holds the cards of that breakpoint`, { timeoutMs: 15_000 }, async ($, on) => {
+        await boot($, on)
+        for (const surface of surfaces) {
+          // the mount resolves only when the surface's table accepts every element and prop of the tree
+          const ui = await mountPane($, columns, surface)
+          const root = await ui.drawn()
+          expect(root).toMatchObject({ type: 'Box', props: { flexDirection: 'column', paddingX: 1 } })
+          expect(paneParts(root, columns).cards.map(c => [c.title, c.width])).toEqual(cards)
+          await ui.unmount()
+        }
+      })
+    }
   }
 
-  test('the cards are real Boxes with a round dim border and a title row, not lines of text', async ($, on) => {
+  // 15 s: normal 1.2 s (load 2-4), 3.2 s at load 70-84
+  test('the cards are real Boxes with a round dim border and a title row, not lines of text', { timeoutMs: 15_000 }, async ($, on) => {
     await boot($, on)
     for (const surface of SURFACES) {
       const ui = await mountPane($, 89, surface)
@@ -301,10 +306,12 @@ describe('completeness through the kit: every field of the old pane is in the tr
 describe('no Text passes its box at any width from 20 to 120, through the kit', () => {
   const FIRST = 22
   const LAST = 122
+  type On = Parameters<typeof boot>[1]
 
-  const sweep = async ($: Engine) => {
+  // one sweep per test nears the 5 s per-test limit under load, so each scenario is cut in six
+  const sweep = async ($: Engine, from: number, to: number) => {
     for (const surface of ['terminal', 'desktop'] as const) {
-      for (let columns = FIRST; columns <= LAST; columns++) {
+      for (let columns = from; columns <= to; columns++) {
         const ui = await mountPane($, columns, surface)
         const problems = findOverflow((await ui.drawn()) as Node, columns)
         await ui.unmount()
@@ -313,12 +320,43 @@ describe('no Text passes its box at any width from 20 to 120, through the kit', 
     }
   }
 
-  test('a healthy session', async ($, on) => {
+  // 15 s: 3.1 s at load 70-84
+  test('a healthy session, widths 22 to 40', { timeoutMs: 15_000 }, async ($, on) => {
     await boot($, on)
-    await sweep($)
+    await sweep($, 22, 40)
   })
 
-  test('a session with long text, wide characters and a failure behind every card', async ($, on) => {
+  // 15 s: 3.5 s at load 70-84
+  test('a healthy session, widths 41 to 58', { timeoutMs: 15_000 }, async ($, on) => {
+    await boot($, on)
+    await sweep($, 41, 58)
+  })
+
+  // 15 s: 5.1 s at load 70-84
+  test('a healthy session, widths 59 to 77', { timeoutMs: 15_000 }, async ($, on) => {
+    await boot($, on)
+    await sweep($, 59, 77)
+  })
+
+  // load 68 in the whole-suite run: 2.6 s (5 s limit); 15 s here, the assertions are unchanged
+  test('a healthy session, widths 78 to 96', { timeoutMs: 15_000 }, async ($, on) => {
+    await boot($, on)
+    await sweep($, 78, 96)
+  })
+
+  // 15 s: 5.1 s at load 70-84
+  test('a healthy session, widths 97 to 109', { timeoutMs: 15_000 }, async ($, on) => {
+    await boot($, on)
+    await sweep($, 97, 109)
+  })
+
+  // 15 s: 5.1 s at load 70-84
+  test('a healthy session, widths 110 to 122', { timeoutMs: 15_000 }, async ($, on) => {
+    await boot($, on)
+    await sweep($, 110, 122)
+  })
+
+  const longText = async ($: Engine, on: On, from: number, to: number) => {
     await boot($, on, (w: World) => {
       w.files.set(`/tmp/claude-summary-${SID}.txt`, '遷移'.repeat(60))
       w.session.cwd = '/very/long/path/that/goes/on/and/on/and/on/to/QCIDiag/S8P_host_GB300/目錄/目錄'
@@ -327,6 +365,18 @@ describe('no Text passes its box at any width from 20 to 120, through the kit', 
       w.files.delete('/proc/meminfo')
       w.usage = new Error('usage refused by a very long and wordy reason that runs on')
     })
-    await sweep($)
-  })
+    await sweep($, from, to)
+  }
+  // 15 s: 4.3 s at load 70-84
+  test('a session with long text, wide characters and a failure behind every card, widths 22 to 40', { timeoutMs: 15_000 }, async ($, on) => longText($, on, 22, 40))
+  // 15 s: 4.4 s at load 70-84
+  test('a session with long text, wide characters and a failure behind every card, widths 41 to 58', { timeoutMs: 15_000 }, async ($, on) => longText($, on, 41, 58))
+  // 15 s: 4.8 s at load 70-84
+  test('a session with long text, wide characters and a failure behind every card, widths 59 to 77', { timeoutMs: 15_000 }, async ($, on) => longText($, on, 59, 77))
+  // 15 s: 5.0 s at load 70-84
+  test('a session with long text, wide characters and a failure behind every card, widths 78 to 96', { timeoutMs: 15_000 }, async ($, on) => longText($, on, 78, 96))
+  // 15 s: 5.0 s at load 70-84
+  test('a session with long text, wide characters and a failure behind every card, widths 97 to 109', { timeoutMs: 15_000 }, async ($, on) => longText($, on, 97, 109))
+  // 15 s: 5.1 s at load 70-84
+  test('a session with long text, wide characters and a failure behind every card, widths 110 to 122', { timeoutMs: 15_000 }, async ($, on) => longText($, on, 110, 122))
 })
