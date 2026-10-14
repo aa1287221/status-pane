@@ -174,6 +174,15 @@ describe('the WAITING card: title and rows', () => {
     expect(card.body.length).toBe(1)
   })
 
+  test('open items, a host down and skipped files: ≥ in the title, the host row before the +N row, WAIT ≥N in the tail', () => {
+    const snap = snapOf([item({ id: 'hosta-aaaa0001' }), item({ id: 'hosta-aaaa0002' })], [{ host: 'hostb', text: 'n/a（缺檔）' }], 2)
+    const card = waitingOf(snap, 89)
+    expect(card.value).toBe('≥2')
+    expect(card.body.at(-1)).toContain('+2 files not read')
+    expect(card.body.slice(0, -1).join('\n')).toContain('hostb n/a（缺檔）')
+    expect(tailText(snap, REF_NOW, 0) ?? '').toMatch(/^WAIT ≥2/)
+  })
+
   test('more than 8 items: 8 drawn, then +N more; the title counts them all', () => {
     const items = Array.from({ length: 10 }, (_, i) => item({ id: `hosta-aaaa00${String(i).padStart(2, '0')}`, what: `item ${i}`, sinceSec: NEW_SINCE + i }))
     const card = waitingOf(snapOf(items), 89)
