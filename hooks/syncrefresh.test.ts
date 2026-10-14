@@ -78,7 +78,7 @@ const held = () => {
 describe('sync refresh: the period', () => {
   test('the first start comes one interval after the refresh starts, then one per interval', async () => {
     const r = rig()
-    startSyncRefresh(r.deps)
+    startSyncRefresh(r.deps, { failed: false })
     await r.clock.advance(MIN5 - 1)
     expect(r.runs.length).toBe(0)
     await r.clock.advance(1)
@@ -94,7 +94,7 @@ describe('sync refresh: the period', () => {
 
   test('cancel stops the period, and nothing starts after it', async () => {
     const r = rig()
-    const handle = startSyncRefresh(r.deps)
+    const handle = startSyncRefresh(r.deps, { failed: false })
     handle.cancel()
     await r.clock.advance(3 * MIN5)
     expect(r.runs.length).toBe(0)
@@ -106,7 +106,7 @@ describe('sync refresh: one run at a time', () => {
     const r = rig()
     const hold = held()
     r.answers.push(() => hold.promise)
-    startSyncRefresh(r.deps)
+    startSyncRefresh(r.deps, { failed: false })
     await r.clock.advance(MIN5)
     expect(r.runs.length).toBe(1)
     await r.clock.advance(MIN5)
@@ -123,7 +123,7 @@ describe('sync refresh: the card and the producer file', () => {
   test('card off: nothing starts and nothing is logged, and it starts again once the card is back on', async () => {
     const r = rig()
     r.knobs.wanted = false
-    startSyncRefresh(r.deps)
+    startSyncRefresh(r.deps, { failed: false })
     await r.clock.advance(2 * MIN5)
     expect(r.runs.length).toBe(0)
     expect(r.logs).toEqual([])
@@ -137,7 +137,7 @@ describe('sync refresh: the card and the producer file', () => {
     r.deps.wanted = async () => {
       throw new Error('state read refused')
     }
-    startSyncRefresh(r.deps)
+    startSyncRefresh(r.deps, { failed: false })
     await r.clock.advance(MIN5)
     expect(r.runs.length).toBe(0)
     expect(r.logs.some(l => /state read refused/.test(l))).toBe(true)
@@ -146,7 +146,7 @@ describe('sync refresh: the card and the producer file', () => {
   test('a missing producer file is logged with its path, and nothing runs', async () => {
     const r = rig()
     r.knobs.files.clear()
-    startSyncRefresh(r.deps)
+    startSyncRefresh(r.deps, { failed: false })
     await r.clock.advance(MIN5)
     expect(r.runs.length).toBe(0)
     expect(r.logs.some(l => /missing/.test(l) && l.includes(PATH))).toBe(true)
@@ -157,7 +157,7 @@ describe('sync refresh: the card and the producer file', () => {
     r.deps.exists = async () => {
       throw new Error('EACCES: permission denied')
     }
-    startSyncRefresh(r.deps)
+    startSyncRefresh(r.deps, { failed: false })
     await r.clock.advance(MIN5)
     expect(r.runs.length).toBe(0)
     expect(r.logs.some(l => /EACCES/.test(l))).toBe(true)
@@ -167,7 +167,7 @@ describe('sync refresh: the card and the producer file', () => {
 describe('sync refresh: the producer run', () => {
   test('the run is the hook command with --print, a stdin that is not a Stop event, and a 30 s bound', async () => {
     const r = rig()
-    startSyncRefresh(r.deps)
+    startSyncRefresh(r.deps, { failed: false })
     await r.clock.advance(MIN5)
     expect(r.runs[0]?.argv).toEqual(['python3', '-I', '-B', PATH, '--print'])
     expect(r.runs[0]?.init).toEqual({ stdin: '{}', timeoutMs: 30_000 })
@@ -175,7 +175,7 @@ describe('sync refresh: the producer run', () => {
 
   test('a clean run logs nothing', async () => {
     const r = rig()
-    startSyncRefresh(r.deps)
+    startSyncRefresh(r.deps, { failed: false })
     await r.clock.advance(MIN5)
     expect(r.runs.length).toBe(1)
     expect(r.logs).toEqual([])
@@ -184,7 +184,7 @@ describe('sync refresh: the producer run', () => {
   test('an exit code of 1 is logged with the code and the report, and the period goes on', async () => {
     const r = rig()
     r.answers.push(() => Promise.resolve({ exitCode: 1, stdout: 'sync-status: failed\n  error:     git_timeout: slow\n', stderr: '' }))
-    startSyncRefresh(r.deps)
+    startSyncRefresh(r.deps, { failed: false })
     await r.clock.advance(MIN5)
     expect(r.logs.join('\n')).toMatch(/exited 1[\s\S]*git_timeout/)
     await r.clock.advance(MIN5)
@@ -194,7 +194,7 @@ describe('sync refresh: the producer run', () => {
   test('an exit code of 2 (cannot write) is logged with what the producer wrote to stderr', async () => {
     const r = rig()
     r.answers.push(() => Promise.resolve({ exitCode: 2, stdout: '', stderr: 'sync-status: cannot write: Permission denied' }))
-    startSyncRefresh(r.deps)
+    startSyncRefresh(r.deps, { failed: false })
     await r.clock.advance(MIN5)
     expect(r.logs.join('\n')).toMatch(/exited 2[\s\S]*Permission denied/)
   })
@@ -202,7 +202,7 @@ describe('sync refresh: the producer run', () => {
   test('a run the host ends with an error, a timeout or a spawn error, is logged and the period goes on', async () => {
     const r = rig()
     r.answers.push(() => Promise.reject(new Error('timed out after 30000 ms')))
-    startSyncRefresh(r.deps)
+    startSyncRefresh(r.deps, { failed: false })
     await r.clock.advance(MIN5)
     expect(r.logs.join('\n')).toMatch(/timed out/)
     await r.clock.advance(MIN5)
@@ -212,7 +212,7 @@ describe('sync refresh: the producer run', () => {
   test('a host timeout keeps the whole aborted reason; only the first line and the engine prefix are cut', async () => {
     const r = rig()
     r.answers.push(() => Promise.reject(new Error('status-pane: $.process.run(python3) aborted: still running after 30000 ms\nsecond line')))
-    startSyncRefresh(r.deps)
+    startSyncRefresh(r.deps, { failed: false })
     await r.clock.advance(MIN5)
     expect(r.logs).toEqual(['sync-status: producer run failed: aborted: still running after 30000 ms'])
   })
@@ -220,7 +220,7 @@ describe('sync refresh: the producer run', () => {
   test('a missing python3 is logged as a failed run, not as a start that never happened', async () => {
     const r = rig()
     r.answers.push(() => Promise.reject(new Error('status-pane: $.process.run(python3) spawn python3 ENOENT')))
-    startSyncRefresh(r.deps)
+    startSyncRefresh(r.deps, { failed: false })
     await r.clock.advance(MIN5)
     expect(r.logs).toEqual(['sync-status: producer run failed: spawn python3 ENOENT'])
     expect(r.logs.join('\n')).not.toMatch(/cannot start/)
@@ -229,7 +229,7 @@ describe('sync refresh: the producer run', () => {
   test('a run error longer than 300 characters is cut at 300, with the ellipsis inside the cut', async () => {
     const r = rig()
     r.answers.push(() => Promise.reject(new Error(`status-pane: $.process.run(python3) ${'x'.repeat(400)}`)))
-    startSyncRefresh(r.deps)
+    startSyncRefresh(r.deps, { failed: false })
     await r.clock.advance(MIN5)
     expect(r.logs.length).toBe(1)
     expect(r.logs[0]?.length).toBe('sync-status: producer run failed: '.length + 300)
@@ -253,8 +253,106 @@ describe('sync refresh: where the producer is', () => {
     const r = rig()
     r.knobs.configDir = '/opt/cc'
     r.knobs.files = new Set(['/opt/cc/scripts/hooks/sync-status.py'])
-    startSyncRefresh(r.deps)
+    startSyncRefresh(r.deps, { failed: false })
     await r.clock.advance(MIN5)
     expect(r.runs[0]?.argv[3]).toBe('/opt/cc/scripts/hooks/sync-status.py')
+  })
+})
+
+describe('sync refresh: the outcome of the last finished refresh (#123)', () => {
+  // the mod run's own record; `failed` is the last finished refresh's outcome, false before the first one
+  const failedOf = (state: { failed: boolean }) => state.failed
+
+  test('nothing has finished yet: the outcome reads not failed, and a start alone changes nothing', () => {
+    const r = rig()
+    const state = { failed: false }
+    startSyncRefresh(r.deps, state)
+    expect(failedOf(state)).toBe(false)
+  })
+
+  test('a non-zero exit sets the outcome to failed, and the next clean run clears it', async () => {
+    const r = rig()
+    const state = { failed: false }
+    r.answers.push(() => Promise.resolve({ exitCode: 2, stdout: '', stderr: 'cannot write' }))
+    startSyncRefresh(r.deps, state)
+    await r.clock.advance(MIN5)
+    expect(failedOf(state)).toBe(true)
+    await r.clock.advance(MIN5)
+    expect(failedOf(state)).toBe(false)
+  })
+
+  test('a missing producer file sets the outcome to failed', async () => {
+    const r = rig()
+    const state = { failed: false }
+    r.knobs.files.clear()
+    startSyncRefresh(r.deps, state)
+    await r.clock.advance(MIN5)
+    expect(failedOf(state)).toBe(true)
+  })
+
+  test('neither CLAUDE_CONFIG_DIR nor HOME sets the outcome to failed: there is no path to run', async () => {
+    const r = rig()
+    const state = { failed: false }
+    r.knobs.home = undefined
+    startSyncRefresh(r.deps, state)
+    await r.clock.advance(MIN5)
+    expect(r.runs.length).toBe(0)
+    expect(failedOf(state)).toBe(true)
+  })
+
+  test('a run the host rejects sets the outcome to failed, and the period goes on', async () => {
+    const r = rig()
+    const state = { failed: false }
+    r.answers.push(() => Promise.reject(new Error('status-pane: $.process.run(python3) aborted: still running after 30000 ms')))
+    startSyncRefresh(r.deps, state)
+    await r.clock.advance(MIN5)
+    expect(failedOf(state)).toBe(true)
+    await r.clock.advance(MIN5)
+    expect(r.runs.length).toBe(2)
+  })
+
+  test('card off is no attempt: a failure before it still stands', async () => {
+    const r = rig()
+    const state = { failed: false }
+    r.answers.push(() => Promise.resolve({ exitCode: 2, stdout: '', stderr: '' }))
+    startSyncRefresh(r.deps, state)
+    await r.clock.advance(MIN5)
+    expect(failedOf(state)).toBe(true)
+    r.knobs.wanted = false
+    await r.clock.advance(2 * MIN5)
+    expect(r.runs.length).toBe(1)
+    expect(failedOf(state)).toBe(true)
+  })
+
+  test('a tick skipped for a run still going does not change the outcome; the finished run sets it', async () => {
+    const r = rig()
+    const state = { failed: false }
+    const hold = held()
+    r.answers.push(() => Promise.resolve({ exitCode: 2, stdout: '', stderr: '' }))
+    r.answers.push(() => hold.promise)
+    startSyncRefresh(r.deps, state)
+    await r.clock.advance(MIN5)
+    expect(failedOf(state)).toBe(true)
+    await r.clock.advance(MIN5)
+    expect(r.runs.length).toBe(2)
+    await r.clock.advance(MIN5)
+    expect(r.runs.length).toBe(2)
+    expect(r.logs.some(l => /still going/.test(l))).toBe(true)
+    expect(failedOf(state)).toBe(true)
+    hold.release(OK)
+    await flush()
+    expect(failedOf(state)).toBe(false)
+  })
+
+  test('a new start on the same state (a re-arm) keeps the outcome the last refresh left', async () => {
+    const r = rig()
+    const state = { failed: false }
+    r.answers.push(() => Promise.resolve({ exitCode: 2, stdout: '', stderr: '' }))
+    const first = startSyncRefresh(r.deps, state)
+    await r.clock.advance(MIN5)
+    expect(failedOf(state)).toBe(true)
+    first.cancel()
+    startSyncRefresh(r.deps, state)
+    expect(failedOf(state)).toBe(true)
   })
 })
