@@ -123,8 +123,11 @@ export type MemInfo = { usedKb: number; totalKb: number; pct: number }
 /** The SYNC card (SCHEMA.md kind `sync-status`, #29): ahead and behind of sync-data-v2 against its last fetch; stamps are epoch seconds or null. */
 export type SyncData = { branch: string; upstream: string; ahead: number; behind: number; lastPushSec: number | null; lastFetchSec: number | null; observedAtSec: number }
 
-/** The GIT HYGIENE card: the last warning the commit or push hook recorded (kind `git-hygiene`, #151). */
-export type HygieneData = { event: string; repo: string; firstLine: string; lines: string[]; observedAtSec: number; ageSec: number }
+/** One warning the commit or push hook recorded; `source` is `subtask` when the hook ran inside a subtask (kind `git-hygiene`, #151). */
+export type HygieneEntry = { event: string; repo: string; firstLine: string; lines: string[]; atSec: number; ageSec: number; source: 'main' | 'subtask' }
+
+/** The GIT HYGIENE card: the entries the record holds, newest first (1 to 5). */
+export type HygieneData = { entries: HygieneEntry[] }
 
 /** Everything the pane and the tail draw from; written by one refresh. */
 export type Snap = {

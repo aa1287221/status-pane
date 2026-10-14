@@ -610,25 +610,25 @@ const syncCard = (snap: Snap, width: number, inner: number, c: Ctx): Card => {
   }
 }
 
-/** The GIT HYGIENE card: the last warning the commit or push hook recorded, its age (舊 past 30 minutes), the event, the repo and the first line. */
+/** The last path segment of a repo path: the name the card shows for it (the full path is in the record). */
+const repoName = (repo: string): string => repo.split('/').filter(Boolean).pop() ?? repo
+
+/** The GIT HYGIENE card: one row per recorded warning, newest first (age, 背景 for a subtask, repo name, first line); a row past 30 minutes is 舊. */
 const hygieneCard = (snap: Snap, width: number, inner: number): Card => {
   const r = snap.hygiene
   if (!r) return { id: 'hygiene', width, rows: [titleRow('HYGIENE', null, inner)] }
   if (!r.ok && r.why === HYGIENE_MISSING) return { id: 'hygiene', width, rows: [titleRow('HYGIENE', null, inner), ...kv('state', [dim('還沒有警告紀錄')], inner)] }
   if (!r.ok) return { id: 'hygiene', width, rows: [titleRow('HYGIENE', null, inner), ...naRows(r.why, inner)] }
-  const v = r.v
-  const age = ageText(v.ageSec)
-  const value = v.ageSec > HYGIENE_STALE_SEC ? seg(`舊 ${age}`, { color: PALETTE.yellow }) : plain(age)
-  // a label on its own row, its text wrapped under it: a label beside a full-width text would overflow the card
-  const block = (label: string, t: string): CardRow[] => [
-    { kind: 'split', parts: [[dim(label)]] },
-    ...wrapWords(t.replace(BIDI_RE, ''), inner).map((line): CardRow => ({ kind: 'text', line: [plain(line)] })),
-  ]
-  return {
-    id: 'hygiene',
-    width,
-    rows: [titleRow('HYGIENE', value, inner), ...kv('event', [plain(v.event)], inner), ...block('repo', v.repo), ...block('warning', v.firstLine)],
-  }
+  const entries = r.v.entries
+  // a row is cut to the card width, never wrapped: the list stays one row per entry
+  const rows = entries.map((e): CardRow => {
+    const age = ageText(e.ageSec)
+    const ageSeg = e.ageSec > HYGIENE_STALE_SEC ? seg(`舊 ${age}`, { color: PALETTE.yellow }) : plain(age)
+    const sub: Line = e.source === 'subtask' ? [dim('背景'), plain(' ')] : []
+    const tail = `${repoName(e.repo)}  ${e.firstLine}`.replace(BIDI_RE, '')
+    return { kind: 'text', line: fitLine([ageSeg, plain('  '), ...sub, plain(tail)], inner) }
+  })
+  return { id: 'hygiene', width, rows: [titleRow('HYGIENE', plain(`${entries.length} 筆`), inner), ...rows] }
 }
 
 /** The demo card of the side file path: the count the file holds, its age at this draw and when it was observed. */
