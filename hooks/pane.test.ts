@@ -156,7 +156,7 @@ describe('#10 pane through the engine', () => {
 describe('the CPU history', () => {
   const STAT = (idle: number, busy: number) => `cpu  ${busy} 0 0 ${idle} 0 0 0 0 0 0\ncpu0 1 1 1 1 1 1 1 0 0 0\n`
   /** A machine whose counters start at a known place, and a way to let `share` percent of the next 100 ticks be busy. */
-  const machine = (world: World, advance: (ms: number) => Promise<void>, clock: { settle: () => Promise<void> }) => {
+  const machine = (world: World, clock: { advance: (ms: number) => Promise<void>; settle: () => Promise<void> }) => {
     let idle = 1000
     let busy = 0
     return {
@@ -165,14 +165,16 @@ describe('the CPU history', () => {
         idle += 100 - share
         busy += share
         world.files.set('/proc/stat', STAT(idle, busy))
-        await advance(30_000)
+        // one 30 s step: the fixture's 1 s steps only add work, and the refresh tick falls on this mark
+        world.now += 30_000
+        await clock.advance(30_000)
         await clock.settle()
       },
     }
   }
   const boot0 = async ($: Engine, on: Parameters<typeof boot>[1]) => {
     const up = await boot($, on, w => w.files.set('/proc/stat', STAT(1000, 0)))
-    return { ...up, cpu: machine(up.world, up.advance, up.clock) }
+    return { ...up, cpu: machine(up.world, up.clock) }
   }
   /** The chart's two rows in the SYSTEM card at `columns`: the row above the label line, and the label line itself. */
   const chart = async ($: Engine, columns = 49) => {
