@@ -343,9 +343,9 @@ What it does:
   `observe` records `would: rewrite`. `next` is called once on every path but the skip, with the event as it came plus
   `instructions`, so `trigger`, `agentId` and `messages` are the engine's. A failure of `next` is the engine's: it is
   passed on and never retried.
-  The precompute check comes before `hasKeep` (`keeplist.ts` L220-221): in `on` mode an empty list still gets `{ skip }`, and
+  The precompute check comes before `hasKeep` (`keeplist.ts` L220-221): in `on` mode, under the default precompute policy `skip`, an empty list still gets `{ skip }`, and
   no source is read for it (`register.tsx` L521 asks with `hasKeep: true` first). The code gives no reason for this order
-  (its comment, L211-212, says only that a skip needs no sources), and no commit records one. It is current behaviour; the
+  (its comment, L209-212, explains why a caller asks with `hasKeep: true` first, not why the check precedes `hasKeep`), and no commit records one. It is current behaviour; the
   trade-off is the summarizer's latency at the real compaction, as in the precompute bullet below.
 - **Precompute** (the ticket's acceptance item) is skipped by default: the engine keeps a precomputed summary for the
   next compaction, and with instructions-only injection a summary made now would carry no list, or one that is stale
