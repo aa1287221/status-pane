@@ -850,4 +850,15 @@ describe('sync-status: a stale file counts when the last refresh failed (#123)',
     expect(starts(world).length).toBe(1)
     await expectRow($, /^n\/a（缺檔）$/, 0)
   })
+
+  test('matrix, a sleep: a turn that re-arms the timers on a stale snapshot keeps the failure counted', async ($, on) => {
+    const { world, advance, clock } = await modAt($, on, AGED_MS, behind, { exitCode: 2 })
+    await advance(MIN5)
+    await expectRow($, /^n\/a（過期/, 1)
+    // the snapshot is older than STALE_MS now, so the turn re-arms the producer's period
+    world.now += 100_000
+    await $.turn.complete(TURN_DONE)
+    await clock.settle()
+    await expectRow($, /^n\/a（過期/, 1)
+  })
 })
