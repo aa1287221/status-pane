@@ -6,19 +6,22 @@ export const SYNC_REFRESH_MS = 300_000
 /** The host ends a run after this long and the call rejects; the producer's own git calls share an 8 s budget. */
 export const SYNC_RUN_TIMEOUT_MS = 30_000
 
-const SKIPPED = 'sync-status: previous run still going, tick skipped'
 const REPORT_MAX = 300
 
 export type SyncRunInit = { stdin: string; timeoutMs: number }
 export type SyncRunResult = { exitCode: number; stdout: string; stderr: string }
-/** The last finished refresh of this mod run; the caller keeps it, so a re-arm does not forget it (#123). */
-export type SyncRefreshState = { failed: boolean }
+/**
+ * The mod run's own record, kept by the caller so a re-arm forgets neither: the last finished refresh (#123) and the run in
+ * flight (#125). `since` is the start in epoch ms, null until the clock has answered.
+ */
+export type SyncRefreshState = { failed: boolean; running: { since: number | null } | null }
 /** `tried` false: the card is off, which is no attempt; otherwise `error` is the reason, null for a clean run. */
 type Attempt = { tried: false } | { tried: true; error: string | null }
 
 /** What a refresh needs from the engine. register.tsx builds it from `$`; the tests build it from a fake clock. */
 export type SyncDeps = {
   after: (ms: number, fn: () => void) => { cancel: () => void }
+  now: () => Promise<number>
   /** The SYNC card is on and the master switch too; the producer stays off otherwise. */
   wanted: () => Promise<boolean>
   configDir: () => Promise<string | undefined>
@@ -56,11 +59,14 @@ const runError = (err: unknown): string => {
   return text.length > REPORT_MAX ? `${text.slice(0, REPORT_MAX - 3)}...` : text
 }
 
+/** A tick that finds the last run unfinished; `age` is that run's age in whole seconds when the clock has said it. */
+const skippedLine = (age: number | null): string =>
+  `sync-status: previous run still going${age === null ? '' : ` for ${age} s`}, tick skipped`
+
 /** Starts the period. A tick that finds the last run unfinished is skipped and logged; the tick after it runs. */
 export const startSyncRefresh = (deps: SyncDeps, state: SyncRefreshState): { cancel: () => void } => {
   let stopped = false
   let period: { cancel: () => void } | null = null
-  let busy = false
 
   const schedule = (): void => {
     if (stopped) return
@@ -85,20 +91,32 @@ export const startSyncRefresh = (deps: SyncDeps, state: SyncRefreshState): { can
   const onTick = (): void => {
     // the next period is set first, so the cadence is the interval and not the interval plus the run
     schedule()
-    if (busy) {
-      deps.log(SKIPPED)
+    // the record lives on the caller's state, so a period that a re-arm started sees the run an older period began
+    const inFlight = state.running
+    if (inFlight !== null) {
+      void deps.now().then(
+        now => deps.log(skippedLine(inFlight.since === null ? null : Math.floor((now - inFlight.since) / 1000))),
+        () => deps.log(skippedLine(null)),
+      )
       return
     }
-    busy = true
+    const run = { since: null as number | null }
+    state.running = run
+    void deps.now().then(
+      now => {
+        run.since = now
+      },
+      () => undefined,
+    )
     attempt().then(
       r => {
-        busy = false
+        state.running = null
         if (!r.tried) return
         state.failed = r.error !== null
         if (r.error !== null) deps.log(r.error)
       },
       err => {
-        busy = false
+        state.running = null
         state.failed = true
         deps.log(`sync-status: producer run failed: ${runError(err)}`)
       },

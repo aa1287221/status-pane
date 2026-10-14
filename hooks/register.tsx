@@ -81,7 +81,7 @@ type Run = {
   suggestGuard: Timer | null
   /** The producer's own period (#91); restarted whenever the pane's timer is. */
   sync: { cancel: () => void } | null
-  /** Outlives the period above: its last refresh decides whether a stale SYNC file counts (#123). */
+  /** Outlives the period above: its last refresh decides whether a stale SYNC file counts (#123), and its run in flight holds off a re-arm's (#125). */
   syncState: SyncRefreshState
 }
 
@@ -231,6 +231,7 @@ const armSync = ($: EngineInterface, run: Run): void => {
   run.sync?.cancel()
   run.sync = startSyncRefresh({
     after: (ms, fn) => $.clock.after(ms, fn),
+    now: () => $.clock.now(),
     // the pane's own switches, as the last refresh read them
     wanted: async () => {
       const snap = await read($, snapA)
@@ -613,7 +614,7 @@ export const register: Register = on => {
     suggesting: false,
     suggestGuard: null,
     sync: null,
-    syncState: { failed: false },
+    syncState: { failed: false, running: null },
   }
 
   on('session.start', async ($, e, next) => {
