@@ -6,6 +6,7 @@ import type { Io } from './collect'
 import { addRun, addStart, bgStartOf, endTask, mayStartBg, noteStop, cannotDraw, DEAD_MS, dropRun, effortFrom, mergeTail, patchLineCount, progressText, runOf, sidOf, STALE_MS, tailText, why } from './model'
 import { HIST_MAX, layoutTree, paneLayout } from './pane'
 import { startSyncRefresh } from './syncrefresh'
+import type { SyncRefreshState } from './syncrefresh'
 import { readBytesCapped } from './sidefile'
 import type { BgStart, InflightState, NowState, Res } from './state'
 import { COMPACT_TEXT, compactConfig, fillOf, shouldSuggest } from './compact'
@@ -80,6 +81,8 @@ type Run = {
   suggestGuard: Timer | null
   /** The producer's own period (#91); restarted whenever the pane's timer is. */
   sync: { cancel: () => void } | null
+  /** Outlives the period above: its last refresh decides whether a stale SYNC file counts (#123), and its run in flight holds off a re-arm's (#125). */
+  syncState: SyncRefreshState
 }
 
 /** The seam collect.ts reads and writes through; `$` cannot be passed across an import. */
@@ -166,6 +169,7 @@ const tick = ($: EngineInterface, run: Run): Promise<void> => {
         prevCpu,
         prevToggles: snap?.toggles ?? null,
         prevHooks: snap?.hooks ?? null,
+        syncFailed: () => run.syncState.failed,
         mcpDue: now - run.lastMcpKick >= MCP_EVERY_MS,
         isCurrent,
       })
@@ -227,6 +231,7 @@ const armSync = ($: EngineInterface, run: Run): void => {
   run.sync?.cancel()
   run.sync = startSyncRefresh({
     after: (ms, fn) => $.clock.after(ms, fn),
+    now: () => $.clock.now(),
     // the pane's own switches, as the last refresh read them
     wanted: async () => {
       const snap = await read($, snapA)
@@ -243,7 +248,7 @@ const armSync = ($: EngineInterface, run: Run): void => {
         // the line is lost; nothing drawn depends on it
       }
     },
-  })
+  }, run.syncState)
 }
 
 const arm = ($: EngineInterface, run: Run): void => {
@@ -609,6 +614,7 @@ export const register: Register = on => {
     suggesting: false,
     suggestGuard: null,
     sync: null,
+    syncState: { failed: false, running: null },
   }
 
   on('session.start', async ($, e, next) => {

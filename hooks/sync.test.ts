@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { EXPECTED_TEXT, FILES, HUB_COMMIT, REF_NOW_MS } from './sync.fixtures'
 import { TURN_DONE, boot, cardOf, hintText, makeSnap, mountPane, stallNext } from './fixture'
-import type { World } from './fixture'
+import type { Proc, World } from './fixture'
 import { dw, parseTogglesStrict, tailText } from './model'
 import { layoutTree, paneLayout } from './pane'
 import type { Snap, SyncData } from './state'
@@ -672,5 +672,269 @@ describe('sync-status: the mod starts the producer every five minutes (#91)', ()
     expect(starts(world)).toHaveLength(0)
     await advance(100_000)
     expect(starts(world)).toHaveLength(1)
+  })
+
+  test('before the first snapshot exists, a producer tick starts nothing and logs nothing (the card check reads no snapshot as off)', async ($, on) => {
+    const { world, advance } = await boot($, on, w => {
+      w.files.delete(ROWS)
+      w.files.set(PROD, '# producer')
+      w.procs.set(ARGV.join(' '), { exitCode: 0 })
+      // a refused write leaves no snapshot, so every read of it finds none
+      w.denyState.add('snap')
+    })
+    await advance(MIN5)
+    expect(starts(world)).toHaveLength(0)
+    expect(debugLines(world).filter(t => /sync-status/.test(t))).toEqual([])
+  })
+})
+
+describe('sync-status: a stale file counts when the last refresh failed (#123)', () => {
+  const ROWS = '/root/.claude/cc-statusline-rows.json'
+  const PROD = '/root/.claude/scripts/hooks/sync-status.py'
+  const SIDE = '/tmp/claude-side/sync-status.json'
+  const ARGV = ['python3', '-I', '-B', PROD, '--print']
+  const MIN5 = 300_000
+  const behind = FILES['sync-status.behind3.json']!
+  /** `behind` is observed at 11:59:30, so 20 minutes on it is 1230 s old: past the 900 s TTL. */
+  const AGED_MS = REF_NOW_MS + 20 * 60_000
+  /** The same bytes observed at 12:24:30: fresh until 12:39:30. */
+  const fresh = behind.split('2026-10-10T11:59:30Z').join('2026-10-10T12:24:30Z')
+  type Ctx = Parameters<typeof mountPane>[0]
+  type On = Parameters<typeof boot>[1]
+  const starts = (world: World) => world.ran.filter(r => r.argv.join(' ') === ARGV.join(' '))
+  const logged = (world: World) => world.logged.filter(l => l.to === 'debug').map(l => l.text).join('\n')
+
+  /** The cards and the rendered text of one draw of the pane at 89 columns. */
+  const drawn = async ($: Ctx) => {
+    const ui = await mountPane($, 89)
+    const tree = await ui.drawn()
+    await ui.unmount()
+    return { parts: paneParts(tree, 89), text: renderTree(tree, 89).join('\n') }
+  }
+  const errorsIn = (text: string) => Number(/(\d+) errors?\b/.exec(text)?.[1] ?? 0)
+  const expectRow = async ($: Ctx, card: RegExp, errors: number) => {
+    const { parts, text } = await drawn($)
+    expect(cardOf(parts, 'SYNC').body.join('').replace(/\s/g, '')).toMatch(card)
+    expect(errorsIn(text)).toBe(errors)
+  }
+
+  /** The mod boots at `at` with the SYNC file `file` (none when null); a producer answering `answer` exists unless `answer` is null. */
+  const modAt = ($: Ctx, on: On, at: number, file: string | null, answer: Proc | null, extra: (w: World) => void = () => {}) =>
+    boot($, on, w => {
+      w.now = at
+      w.files.delete(ROWS)
+      if (file !== null) w.files.set(SIDE, file)
+      if (answer !== null) {
+        w.files.set(PROD, '# producer')
+        w.procs.set(ARGV.join(' '), answer)
+      }
+      extra(w)
+    })
+
+  /** Steps the clock in 30 s marks, not the fixture's 1 s: a held run makes each 1 s step ~3 ms, and the 300 s ticks land on these marks. */
+  const COARSE_MS = 30_000
+  const coarse = async (w: World, clock: { advance: (ms: number) => Promise<void> }, ms: number) => {
+    for (let left = ms; left > 0; left -= COARSE_MS) {
+      const step = Math.min(COARSE_MS, left)
+      w.now += step
+      await clock.advance(step)
+    }
+  }
+
+  test('matrix: stale, no refresh has finished yet: not counted', async ($, on) => {
+    await modAt($, on, AGED_MS, behind, { exitCode: 2 })
+    await expectRow($, /^n\/a（過期/, 0)
+  })
+
+  test('matrix: stale, the last refresh was clean: not counted', async ($, on) => {
+    const { world, advance } = await modAt($, on, AGED_MS, behind, { exitCode: 0 })
+    await advance(MIN5)
+    expect(starts(world).length).toBe(1)
+    await expectRow($, /^n\/a（過期/, 0)
+  })
+
+  test('matrix: stale, the last refresh exited 2: counted one', async ($, on) => {
+    const { world, advance } = await modAt($, on, AGED_MS, behind, { exitCode: 2, stderr: 'sync-status: cannot write' })
+    await advance(MIN5)
+    expect(starts(world).length).toBe(1)
+    await expectRow($, /^n\/a（過期/, 1)
+  })
+
+  test('matrix: stale, the last refresh timed out (the host ends the run): counted one', async ($, on) => {
+    const { world, advance } = await modAt(
+      $,
+      on,
+      AGED_MS,
+      behind,
+      new Error('status-pane: $.process.run(python3) aborted: still running after 30000 ms'),
+    )
+    await advance(MIN5)
+    expect(starts(world).length).toBe(1)
+    await expectRow($, /^n\/a（過期/, 1)
+  })
+
+  test('matrix: stale, the last refresh could not spawn python3: counted one', async ($, on) => {
+    const { world, advance } = await modAt($, on, AGED_MS, behind, new Error('status-pane: $.process.run(python3) spawn python3 ENOENT'))
+    await advance(MIN5)
+    expect(starts(world).length).toBe(1)
+    await expectRow($, /^n\/a（過期/, 1)
+  })
+
+  test('matrix: stale, the producer file is missing: counted one, and the reason is in the debug log', async ($, on) => {
+    const { world, advance } = await modAt($, on, AGED_MS, behind, null)
+    await advance(MIN5)
+    expect(starts(world).length).toBe(0)
+    expect(logged(world)).toMatch(/producer missing/)
+    await expectRow($, /^n\/a（過期/, 1)
+  })
+
+  test('matrix: stale, neither CLAUDE_CONFIG_DIR nor HOME is set: counted one', async ($, on) => {
+    const { world, advance } = await modAt($, on, AGED_MS, behind, { exitCode: 0 }, w => {
+      delete w.env.HOME
+    })
+    // without HOME other rows read n/a too, so the count is taken as the change the stale file makes
+    const before = errorsIn((await drawn($)).text)
+    await advance(MIN5)
+    expect(starts(world).length).toBe(0)
+    expect(logged(world)).toMatch(/neither CLAUDE_CONFIG_DIR nor HOME/)
+    const after = await drawn($)
+    expect(cardOf(after.parts, 'SYNC').body.join('').replace(/\s/g, '')).toMatch(/^n\/a（過期/)
+    expect(errorsIn(after.text) - before).toBe(1)
+  })
+
+  // a refused check is a failed refresh too (#123 item 1); the reason goes to the debug log and the count is the change the stale file makes
+  test('matrix: stale, the card check is refused: counted one', async ($, on) => {
+    // the snapshot read is refused only across the tick: with it refused for good the pane draws no SYNC card
+    const { world, advance } = await modAt($, on, AGED_MS, behind, { exitCode: 0 })
+    const before = errorsIn((await drawn($)).text)
+    world.denyGet.add('snap')
+    await advance(MIN5)
+    world.denyGet.delete('snap')
+    await advance(30_000)
+    expect(starts(world).length).toBe(0)
+    expect(logged(world)).toMatch(/state read refused/)
+    const after = await drawn($)
+    expect(cardOf(after.parts, 'SYNC').body.join('').replace(/\s/g, '')).toMatch(/^n\/a（過期/)
+    expect(errorsIn(after.text) - before).toBe(1)
+  })
+
+  test('matrix: stale, the producer existence check is refused: counted one', async ($, on) => {
+    const { world, advance } = await modAt($, on, AGED_MS, behind, { exitCode: 0 }, w => {
+      w.denyExists.add(PROD)
+    })
+    const before = errorsIn((await drawn($)).text)
+    await advance(MIN5)
+    expect(starts(world).length).toBe(0)
+    expect(logged(world)).toMatch(/EACCES/)
+    const after = await drawn($)
+    expect(cardOf(after.parts, 'SYNC').body.join('').replace(/\s/g, '')).toMatch(/^n\/a（過期/)
+    expect(errorsIn(after.text) - before).toBe(1)
+  })
+
+  test('matrix: stale, the last refresh exited 1 (the write failed as well): counted one', async ($, on) => {
+    const { world, advance } = await modAt($, on, AGED_MS, behind, { exitCode: 1, stdout: 'sync-status: failed\n  error:     git_timeout: slow\n' })
+    await advance(MIN5)
+    expect(starts(world).length).toBe(1)
+    await expectRow($, /^n\/a（過期/, 1)
+  })
+
+  test('matrix: a failed run, then a clean run and a fresh file: not counted, and not counted once the file ages again', async ($, on) => {
+    const { world, advance } = await modAt($, on, AGED_MS, behind, { exitCode: 2 })
+    await advance(MIN5)
+    await expectRow($, /^n\/a（過期/, 1)
+    world.procs.set(ARGV.join(' '), { exitCode: 0 })
+    world.files.set(SIDE, fresh)
+    await advance(MIN5)
+    await expectRow($, /behind3/, 0)
+    // 12:45: the file is 1290 s old again and the last refresh was clean
+    await advance(15 * 60_000)
+    await expectRow($, /^n\/a（過期/, 0)
+  })
+
+  test('matrix: not stale, the last refresh failed: the file decides; an ok file is not counted, a failed file is', async ($, on) => {
+    const { world, advance } = await modAt($, on, REF_NOW_MS, behind, { exitCode: 2 })
+    await advance(MIN5)
+    expect(starts(world).length).toBe(1)
+    await expectRow($, /behind3/, 0)
+    world.files.set(SIDE, FILES['sync-status.failed.json']!)
+    await advance(MIN5)
+    await expectRow($, /^n\/a（收集失敗：/, 1)
+  })
+
+  test('matrix: a tick skipped for a run still going leaves the outcome as it was', async ($, on) => {
+    // the held run would end at 1000 s, past the last tick the test reads (900 s), so it is still going for every read
+    const { world, clock } = await modAt($, on, AGED_MS, behind, { exitCode: 2 })
+    await coarse(world, clock, MIN5)
+    await expectRow($, /^n\/a（過期/, 1)
+    world.delay.set(`process.run:${ARGV.join(' ')}`, 400_000)
+    await coarse(world, clock, MIN5)
+    await coarse(world, clock, MIN5)
+    expect(starts(world).length).toBe(2)
+    expect(logged(world)).toMatch(/still going/)
+    await expectRow($, /^n\/a（過期/, 1)
+  })
+
+  test('matrix: card off is no attempt and counts nothing; the outcome from before it stands once the card is back', async ($, on) => {
+    const { world, advance } = await modAt($, on, AGED_MS, behind, { exitCode: 2 })
+    await advance(MIN5)
+    await expectRow($, /^n\/a（過期/, 1)
+    world.files.set(ROWS, '{"sync":false}')
+    await advance(MIN5)
+    expect(starts(world).length).toBe(1)
+    expect(errorsIn((await drawn($)).text)).toBe(0)
+    world.files.delete(ROWS)
+    await advance(30_000)
+    expect(errorsIn((await drawn($)).text)).toBe(1)
+  })
+
+  test('matrix: master switch off is no attempt and counts nothing', async ($, on) => {
+    const { world, advance } = await modAt($, on, AGED_MS, behind, { exitCode: 2 })
+    await advance(MIN5)
+    await expectRow($, /^n\/a（過期/, 1)
+    world.files.set(ROWS, '{"enabled":false}')
+    await advance(MIN5)
+    expect(starts(world).length).toBe(1)
+    expect(errorsIn((await drawn($)).text)).toBe(0)
+  })
+
+  // a start the card or the master switch turns away is no attempt: it must not pin a failure from before the first finished run
+  test('matrix: card off at boot and the first tick is no attempt, the card back on before any finished run: not counted', async ($, on) => {
+    const { world, advance } = await modAt($, on, AGED_MS, behind, { exitCode: 2 }, w => {
+      w.files.set(ROWS, '{"sync":false}')
+    })
+    await advance(MIN5)
+    expect(starts(world).length).toBe(0)
+    world.files.delete(ROWS)
+    await advance(30_000)
+    await expectRow($, /^n\/a（過期/, 0)
+  })
+
+  test('matrix: master switch off at boot and the first tick is no attempt, the switch back on before any finished run: not counted', async ($, on) => {
+    const { world, advance } = await modAt($, on, AGED_MS, behind, { exitCode: 2 }, w => {
+      w.files.set(ROWS, '{"enabled":false}')
+    })
+    await advance(MIN5)
+    expect(starts(world).length).toBe(0)
+    world.files.delete(ROWS)
+    await advance(30_000)
+    await expectRow($, /^n\/a（過期/, 0)
+  })
+
+  test('matrix: a missing file is not counted, whatever the last refresh did', async ($, on) => {
+    const { world, advance } = await modAt($, on, AGED_MS, null, { exitCode: 2 })
+    await advance(MIN5)
+    expect(starts(world).length).toBe(1)
+    await expectRow($, /^n\/a（缺檔）$/, 0)
+  })
+
+  test('matrix, a sleep: a turn that re-arms the timers on a stale snapshot keeps the failure counted', async ($, on) => {
+    const { world, advance, clock } = await modAt($, on, AGED_MS, behind, { exitCode: 2 })
+    await advance(MIN5)
+    await expectRow($, /^n\/a（過期/, 1)
+    // the snapshot is older than STALE_MS now, so the turn re-arms the producer's period
+    world.now += 100_000
+    await $.turn.complete(TURN_DONE)
+    await clock.settle()
+    await expectRow($, /^n\/a（過期/, 1)
   })
 })
