@@ -214,9 +214,10 @@ describe('git-hygiene: reader mapping (data rules v2, SCHEMA git-hygiene)', () =
   })
 
   test('a failed envelope is the reader text, never a record', async () => {
-    const text = envelope(null, NOW_SEC - 120, { collection_status: 'failed', error: { code: 'git_timeout', message: 'git timed out' }, last_success_at: null })
+    const text = envelope(null, NOW_SEC - 120, { collection_status: 'failed', error: { code: 'git_timeout', message: 'git timed out' }, last_success_at: stamp(NOW_SEC - 3600) })
     const r = hygieneOf(await readWith(text), NOW_SEC)
     expect(!r.ok && r.why).toMatch(/^n\/a（收集失敗：git timed out/)
+    expect(!r.ok && r.why).toContain('上次成功 1h前')
   })
 
   test('no file is the reader missing verdict, which the card turns into its own text', async () => {
